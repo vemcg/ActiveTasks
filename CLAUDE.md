@@ -4,18 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-2do2go is an Android app (Kotlin + Jetpack Compose), a companion to
+ActiveTasks is an Android app (Kotlin + Jetpack Compose), a companion to
 [MicroTasking](https://github.com/vemcg/MicroTasking) (sibling repo `../MicroTasking`): a
 traditional to-do list that reads the *same* Google Sheet MicroTasking uses, with priority set via
 an Eisenhower matrix (importance x urgency, continuous, not four fixed quadrants) instead of a
-flat scale. Where MicroTasking pushes semi-random prompts, 2do2go is pull — no background alarms,
+flat scale. Where MicroTasking pushes semi-random prompts, ActiveTasks is pull — no background alarms,
 no notifications.
 
 **Gated ingestion, not "every checked row":** unlike MicroTasking's own task pool, an item only
-reaches 2do2go via an explicit "refer to 2do2go" action in MicroTasking's task queue — a row the
+reaches ActiveTasks via an explicit "refer to ActiveTasks" action in MicroTasking's task queue — a row the
 user just checks directly in the Sheet stays purely MicroTasking's task until referred. Referral
 writes importance/urgency to two hidden, protected columns via a shared Apps Script Web App (owned
-by MicroTasking's repo, `scripts/populate_google_sheet.js` there); 2do2go reads those two columns
+by MicroTasking's repo, `scripts/populate_google_sheet.js` there); ActiveTasks reads those two columns
 the same way (never via the plain CSV/gviz export, which would leak hidden-column data) and only
 imports rows present in that read. See `SPEC.md` "Referral bridge" for the full contract
 (negotiated directly with MicroTasking's session/repo, PUNCH_LIST.md item 1 there is the mirror of
@@ -27,8 +27,8 @@ Requires an Android SDK; `local.properties` (gitignored) must contain `sdk.dir=<
 
 - Build debug APK: `./gradlew assembleDebug`
 - Run all unit tests: `./gradlew testDebugUnitTest`
-- Run one test class: `./gradlew testDebugUnitTest --tests "com.twodo2go.app.ToDoDataTest"`
-- Run one test method: `./gradlew testDebugUnitTest --tests "com.twodo2go.app.ToDoDataTest.toDoItemsFromReferredRows_importsOnlyCheckedRowsWithPrioritySet"`
+- Run one test class: `./gradlew testDebugUnitTest --tests "com.activetasks.app.ToDoDataTest"`
+- Run one test method: `./gradlew testDebugUnitTest --tests "com.activetasks.app.ToDoDataTest.toDoItemsFromReferredRows_importsOnlyCheckedRowsWithPrioritySet"`
 - Fast compile check without running tests: `./gradlew compileDebugKotlin`
 
 Manually trigger a build for a non-`main` branch (pushes to other branches do **not**
@@ -37,7 +37,7 @@ auto-trigger the release workflow, same convention as MicroTasking):
 
 ## Architecture
 
-Four source files under `app/src/main/java/com/twodo2go/app/`:
+Four source files under `app/src/main/java/com/activetasks/app/`:
 
 - **`MainActivity.kt`** — the Activity plus every Compose screen: Settings (paste/QR-scan the
   Sheet URL, the Apps Script Web App URL, importance-weight and items-per-list settings, Sync
@@ -80,7 +80,7 @@ existing item just because its sheet row disappeared, got its priority cleared, 
 ran again. An item you're already treating as a live to-do here (progress, priority re-triage)
 stays yours until you deal with it in the app; the sheet is a source of new items, not a mirror to
 sync down to. (MicroTasking's `mergeImportedManagedTasks` is stricter because its sheet is the
-authoritative *category* list; 2do2go's sheet is only ever a source of new items.)
+authoritative *category* list; ActiveTasks's sheet is only ever a source of new items.)
 
 **Google Sheet import**: same mechanics as MicroTasking for columns A-C (tab names via the `.xlsx`
 export's zipped `workbook.xml`, each tab's rows via the `gviz` CSV export, column A as the enabled

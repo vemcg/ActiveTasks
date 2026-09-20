@@ -13,5 +13,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "2do2go"
+rootProject.name = "ActiveTasks"
 include(":app")

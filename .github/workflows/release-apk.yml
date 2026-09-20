@@ -38,12 +38,12 @@ jobs:
           # versioned release/tag/asset, keyed off github.run_number so nothing ever collides.
           DISPLAY_VERSION="v${VERSION_NAME}"
           TAG="$DISPLAY_VERSION"
-          ASSET_NAME="2do2go-$TAG.apk"
+          ASSET_NAME="ActiveTasks-$TAG.apk"
           if [ "$BRANCH" = "main" ]; then
-            RELEASE_NAME="2do2go $DISPLAY_VERSION"
+            RELEASE_NAME="ActiveTasks $DISPLAY_VERSION"
           else
             SAFE_BRANCH=$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-')
-            RELEASE_NAME="2do2go $DISPLAY_VERSION ($SAFE_BRANCH)"
+            RELEASE_NAME="ActiveTasks $DISPLAY_VERSION ($SAFE_BRANCH)"
           fi
           echo "version_base=$VERSION_BASE" >> "$GITHUB_OUTPUT"
           echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
@@ -79,7 +79,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release list --limit 100 --json tagName,name \
-            | jq -r '.[] | select(.name | test("^2do2go v[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+ \\(")) | .tagName' \
+            | jq -r '.[] | select(.name | test("^ActiveTasks v[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+ \\(")) | .tagName' \
             | while read -r old_tag; do
                 echo "Deleting superseded dev release: $old_tag"
                 gh release delete "$old_tag" --yes --cleanup-tag
@@ -100,11 +100,11 @@ jobs:
           MAIN_TAG=""
           if [ "${{ steps.version.outputs.git_branch }}" != "main" ]; then
             MAIN_TAG=$(gh release list --limit 50 --json tagName,name,publishedAt \
-              | jq -r '[.[] | select(.name | test("^2do2go v[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+$"))] | sort_by(.publishedAt) | last | .tagName // empty')
+              | jq -r '[.[] | select(.name | test("^ActiveTasks v[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]+$"))] | sort_by(.publishedAt) | last | .tagName // empty')
           fi
           echo "main_tag=$MAIN_TAG" >> "$GITHUB_OUTPUT"
           if [ -n "$MAIN_TAG" ]; then
-            echo "main_url=https://github.com/${{ github.repository }}/releases/download/$MAIN_TAG/2do2go-$MAIN_TAG.apk" >> "$GITHUB_OUTPUT"
+            echo "main_url=https://github.com/${{ github.repository }}/releases/download/$MAIN_TAG/ActiveTasks-$MAIN_TAG.apk" >> "$GITHUB_OUTPUT"
           else
             echo "main_url=" >> "$GITHUB_OUTPUT"
           fi

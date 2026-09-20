@@ -1,12 +1,12 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-package com.twodo2go.app
+package com.activetasks.app
 
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Client for the Apps Script Web App that both 2do2go and MicroTasking use to read/write the
+ * Client for the Apps Script Web App that both ActiveTasks and MicroTasking use to read/write the
  * hidden, protected Importance/Urgency columns (and to delete a fully-completed row). Those two
  * columns are never read via the plain CSV/gviz export used elsewhere in this file/SheetImport.kt
  * - CSV export includes hidden columns' raw data regardless of Sheets-UI hidden state, which

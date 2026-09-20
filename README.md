@@ -1,10 +1,10 @@
-# 2do2go
+# ActiveTasks
 
 A companion app to [MicroTasking](https://github.com/vemcg/MicroTasking): a traditional
 to-do list, sharing the same Google Sheet (each tab is a list, each checked row is an item),
 prioritized with an Eisenhower matrix (important x urgent) instead of a flat priority field.
 
-MicroTasking nudges you to do things periodically/semi-randomly from a pool. 2do2go is the
+MicroTasking nudges you to do things periodically/semi-randomly from a pool. ActiveTasks is the
 opposite mode: a pull, browse-and-pick list you check when you're ready to plan, not when
 you're prompted.
 

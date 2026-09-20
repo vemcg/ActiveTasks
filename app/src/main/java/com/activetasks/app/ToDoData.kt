@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-package com.twodo2go.app
+package com.activetasks.app
 
 import org.json.JSONArray
 import org.json.JSONObject
@@ -7,7 +7,7 @@ import org.json.JSONObject
 /**
  * Priority is two independent continuous axes (Eisenhower matrix: how important, how urgent),
  * each 0f..1f. Referred items get these from MicroTasking (the exact touch point on its matrix
- * widget); ad-hoc/local items get them from 2do2go's own matrix widget. Values are stored raw and
+ * widget); ad-hoc/local items get them from ActiveTasks's own matrix widget. Values are stored raw and
  * unweighted - see [priorityScore], which applies the user's importance-weight setting at
  * read/sort time rather than baking a fixed formula into the stored data.
  */

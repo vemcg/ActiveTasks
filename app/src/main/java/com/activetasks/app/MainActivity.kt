@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-package com.twodo2go.app
+package com.activetasks.app
 
 import android.Manifest
 import android.content.Intent
@@ -96,9 +96,9 @@ class MainActivity : ComponentActivity() {
                 .apply()
         }
         setContent {
-            MaterialTheme(colorScheme = twoDo2GoColorScheme) {
+            MaterialTheme(colorScheme = activeTasksColorScheme) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    TwoDo2GoApp(
+                    ActiveTasksApp(
                         initialSheetUrl = preferences.getString("sheet_url", "") ?: "",
                         initialAppsScriptUrl = preferences.getString("apps_script_url", "") ?: "",
                         initialImportanceWeight = preferences.getFloat("importance_weight", DEFAULT_IMPORTANCE_WEIGHT),
@@ -120,14 +120,14 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
-        const val PREFS_NAME = "twodo2go_settings"
+        const val PREFS_NAME = "activetasks_settings"
     }
 }
 
 private enum class Screen { CAROUSEL, SETTINGS, QR_SCANNER }
 
 @Composable
-fun TwoDo2GoApp(
+fun ActiveTasksApp(
     initialSheetUrl: String,
     initialAppsScriptUrl: String,
     initialImportanceWeight: Float,
@@ -318,7 +318,7 @@ fun SettingsScreen(
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
-            title = { Text("2do2go Settings") },
+            title = { Text("ActiveTasks Settings") },
             navigationIcon = {
                 if (canGoBack) {
                     IconButton(onClick = onBack) {
@@ -329,7 +329,7 @@ fun SettingsScreen(
         )
         Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
             Text(
-                "Point 2do2go at the same Google Sheet you already use for MicroTasking. Items " +
+                "Point ActiveTasks at the same Google Sheet you already use for MicroTasking. Items " +
                     "only show up here once you've referred them from MicroTasking's task queue.",
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -421,7 +421,7 @@ fun CarouselScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(lists.getOrNull(pagerState.currentPage) ?: "2do2go") },
+                title = { Text(lists.getOrNull(pagerState.currentPage) ?: "ActiveTasks") },
                 actions = {
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
@@ -765,8 +765,8 @@ fun QrScannerScreen(onResult: (String) -> Unit, onCancel: () -> Unit) {
     }
 }
 
-// Same calm palette family as MicroTasking so 2do2go reads as a sibling app.
-private val twoDo2GoColorScheme = lightColorScheme(
+// Same calm palette family as MicroTasking so ActiveTasks reads as a sibling app.
+private val activeTasksColorScheme = lightColorScheme(
     primary = Color(0xFF2E7D6B),
     onPrimary = Color.White,
     secondary = Color(0xFF5FA88F),

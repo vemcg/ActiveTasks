@@ -53,11 +53,11 @@ val shortVersionName = "$versionBase-$buildNumber"
 val fullVersionLabel = "v$shortVersionName-$buildTimestamp-$gitShortSha-$gitBranch"
 
 android {
-    namespace = "com.twodo2go.app"
+    namespace = "com.activetasks.app"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.twodo2go.app"
+        applicationId = "com.activetasks.app"
         minSdk = 26
         targetSdk = 34
         // Must stay a single monotonically increasing integer (Android requirement for
