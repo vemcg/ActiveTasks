@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>2do2go &mdash; Quick Start & Onboarding</title>
+<title>ActiveTasks &mdash; Quick Start & Onboarding</title>
 <style>
   :root {
     --bg: #0f172a;
@@ -159,12 +159,12 @@
 </head>
 <body>
   <header>
-    <h1>2do2go</h1>
+    <h1>ActiveTasks</h1>
     <div class="tagline">A to-do list, prioritized the Eisenhower way.</div>
     <div class="intro">
-      <strong>2do2go</strong> is a companion to MicroTasking: a traditional to-do list that reads
+      <strong>ActiveTasks</strong> is a companion to MicroTasking: a traditional to-do list that reads
       the same Google Sheet as MicroTasking. Items don't just appear here from every checked row -
-      you <strong>refer</strong> a task to 2do2go from MicroTasking's own task queue, dragging a
+      you <strong>refer</strong> a task to ActiveTasks from MicroTasking's own task queue, dragging a
       finger across an importance/urgency matrix to set its priority as you send it over.
     </div>
   </header>
@@ -178,26 +178,16 @@
       </div>
       <ol>
         <li>
-          <strong>Scan or Download:</strong> Point your phone's camera at the <strong>Stable Release</strong> QR code (on the left) below, or tap its download link if you are viewing this page on your phone:
-          <div class="qr-row">
-            <div class="qr-container">
-            <div class="qr-label">Stable Release</div>
-            <img src="qr-main-0.1.0-1.png" alt="2do2go APK QR Code (v0.1.0-1)">
+          <strong>Scan or Download:</strong> Point your phone's camera at the QR code below, or tap its download link if you are viewing this page on your phone:
+          <div class="qr-container">
+            
+            <img src="qr-0.1.0-3.png" alt="ActiveTasks APK QR Code (v0.1.0-3)">
             <br>
-            <a href="https://github.com/vemcg/2do2go/releases/download/v0.1.0-1/2do2go-v0.1.0-1.apk" class="btn" target="_blank" rel="noopener">Download 2do2go APK (v0.1.0-1)</a>
+            <a href="https://github.com/vemcg/ActiveTasks/releases/download/v0.1.0-3/ActiveTasks-v0.1.0-3.apk" class="btn" target="_blank" rel="noopener">Download ActiveTasks APK (v0.1.0-3)</a>
             <br>
-            <a href="https://github.com/vemcg/2do2go/releases/download/v0.1.0-1/2do2go-v0.1.0-1.apk" target="_blank" rel="noopener">Open the download again</a>
+            <a href="https://github.com/vemcg/ActiveTasks/releases/download/v0.1.0-3/ActiveTasks-v0.1.0-3.apk" target="_blank" rel="noopener">Open the download again</a>
           </div>
-            <div class="qr-container">
-            <div class="qr-label">two-apps</div>
-            <img src="qr-0.1.0-2.png" alt="2do2go APK QR Code (v0.1.0-2)">
-            <br>
-            <a href="https://github.com/vemcg/2do2go/releases/download/v0.1.0-2/2do2go-v0.1.0-2.apk" class="btn" target="_blank" rel="noopener">Download 2do2go APK (v0.1.0-2)</a>
-            <br>
-            <a href="https://github.com/vemcg/2do2go/releases/download/v0.1.0-2/2do2go-v0.1.0-2.apk" target="_blank" rel="noopener">Open the download again</a>
-          </div>
-          </div>
-          <p class="qr-guidance"><strong>Which one to use:</strong> Install from the <strong>Stable Release</strong> on the left &mdash; that is the build you should download and run. The <strong>two-apps</strong> development build on the right is an in-progress branch, published for testing only. You are welcome to try it, but it may be unstable, may fail to install or launch, and carries no guarantee that it works at all.</p>
+          
         </li>
         <li>
           <strong>Allow Sideloading (First Time Only):</strong>
@@ -217,14 +207,14 @@
         <div class="step-title">Point It at Your MicroTasking Google Sheet</div>
       </div>
       <p>
-        2do2go doesn't need a spreadsheet of its own &mdash; it reads the same one MicroTasking
+        ActiveTasks doesn't need a spreadsheet of its own &mdash; it reads the same one MicroTasking
         already uses. If you already have MicroTasking set up:
       </p>
       <ol>
-        <li>Open <strong>2do2go</strong> on your Android phone.</li>
+        <li>Open <strong>ActiveTasks</strong> on your Android phone.</li>
         <li>Paste the same Google Sheet URL you used for MicroTasking, or tap <strong>Scan QR</strong> and scan the same Sheet QR code you generated for MicroTasking (from its onboarding page).</li>
         <li>
-          Paste the <strong>Apps Script Web App URL</strong> too &mdash; this is what lets 2do2go
+          Paste the <strong>Apps Script Web App URL</strong> too &mdash; this is what lets ActiveTasks
           and MicroTasking hand tasks back and forth. It's a one-time setup step done from the
           Sheet's <strong>Extensions &rarr; Apps Script</strong> editor: <strong>Deploy &rarr; New
           deployment &rarr; Web app</strong>, Execute as <strong>Me</strong>, Who has access
@@ -243,14 +233,14 @@
         <div class="step-title">Refer a Task from MicroTasking</div>
       </div>
       <p>
-        2do2go starts empty on purpose &mdash; a task only shows up here once you send it over
+        ActiveTasks starts empty on purpose &mdash; a task only shows up here once you send it over
         from MicroTasking:
       </p>
       <ol>
         <li>In <strong>MicroTasking</strong>, open the task queue.</li>
-        <li>Tap <strong>Refer to 2do2go</strong> on any task, any time &mdash; it doesn't matter whether you've started it yet.</li>
-        <li>Drag/tap the importance &times; urgency matrix that pops up to set its priority. That task leaves MicroTasking's queue and lands in 2do2go.</li>
-        <li>Back in <strong>2do2go</strong>, swipe between your lists (one per Sheet tab) to find it, set a progress %, and mark it <strong>Complete (for now)</strong> to hand it back to MicroTasking, or <strong>Fully complete</strong> to remove it for good.</li>
+        <li>Tap <strong>Refer to ActiveTasks</strong> on any task, any time &mdash; it doesn't matter whether you've started it yet.</li>
+        <li>Drag/tap the importance &times; urgency matrix that pops up to set its priority. That task leaves MicroTasking's queue and lands in ActiveTasks.</li>
+        <li>Back in <strong>ActiveTasks</strong>, swipe between your lists (one per Sheet tab) to find it, set a progress %, and mark it <strong>Complete (for now)</strong> to hand it back to MicroTasking, or <strong>Fully complete</strong> to remove it for good.</li>
       </ol>
     </section>
   </main>
