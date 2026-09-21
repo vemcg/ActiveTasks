@@ -65,6 +65,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -74,6 +75,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -170,17 +173,29 @@ fun ActiveTasksApp(
         onListsSaved(newLists)
     }
 
+    // A sync already in flight was fetched before whatever change just happened, so its result is
+    // stale: [resyncPending] queues one more sync behind it, and [removedDuringSync] keeps the
+    // stale result from re-adding an item completed while it was running.
+    var resyncPending by remember { mutableStateOf(false) }
+    val removedDuringSync = remember { mutableSetOf<String>() }
+
     fun runSync() {
         if (sheetUrl.isBlank()) return
         if (appsScriptUrl.isBlank()) {
             syncMessage = "Set the Apps Script Web App URL above to sync referred items."
             return
         }
+        if (syncing) {
+            resyncPending = true
+            return
+        }
         syncing = true
+        removedDuringSync.clear()
         coroutineScope.launch {
             val tabs = withContext(Dispatchers.IO) { fetchSheetTabs(sheetUrl) }
             if (tabs.isEmpty()) {
                 syncing = false
+                resyncPending = false
                 syncMessage = "Couldn't read any tabs from this Sheet. Check the URL and that " +
                     "sharing is \"Anyone with the link can view\"."
                 return@launch
@@ -194,10 +209,26 @@ fun ActiveTasksApp(
                 }
             }
             syncing = false
-            persistItems(mergeImportedToDoItems(imported, items))
+            persistItems(mergeImportedToDoItems(imported.filterNot { it.id in removedDuringSync }, items))
             persistLists(tabs.map { it.tabName })
             syncMessage = "Synced ${tabs.size} list(s)."
+            if (resyncPending) {
+                resyncPending = false
+                runSync()
+            }
         }
+    }
+
+    // Sync on every foreground entry - a cold launch, or coming back from MicroTasking after a
+    // referral - so this list never waits on a manual "Sync Lists" to catch up.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val latestRunSync by rememberUpdatedState(::runSync)
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) latestRunSync()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     fun completeForNow(item: ToDoItem) {
@@ -207,7 +238,9 @@ fun ActiveTasksApp(
             val ok = withContext(Dispatchers.IO) { clearSheetPriority(appsScriptUrl, item.list, item.description) }
             busy = false
             if (ok) {
+                removedDuringSync += item.id
                 persistItems(items.filterNot { it.id == item.id })
+                runSync()
             } else {
                 actionError = "Couldn't reach the Sheet to clear this item's priority - check your connection and try again."
             }
@@ -221,7 +254,9 @@ fun ActiveTasksApp(
             val ok = withContext(Dispatchers.IO) { deleteSheetRow(appsScriptUrl, item.list, item.description) }
             busy = false
             if (ok) {
+                removedDuringSync += item.id
                 persistItems(items.filterNot { it.id == item.id })
+                runSync()
             } else {
                 actionError = "Couldn't reach the Sheet to remove this row - check your connection and try again."
             }

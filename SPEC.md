@@ -89,11 +89,13 @@ a matrix touch on MicroTasking's side.
 5. Any row with importance/urgency set is excluded from MicroTasking's own queue selection going
    forward - checked against the Apps Script-sourced state, not just a local flag, so it's correct
    even from a second device or fresh install.
-6. ActiveTasks syncs (manual "Sync Lists" or periodic), reading each tab's plain columns via the
+6. ActiveTasks syncs (manual "Sync Lists", every time the app comes to the foreground, and right
+   after its own Complete (for now) / Fully complete; see MicroTasking's `SPEC.md` "Sync cadence"
+   for the in-flight-sync handling), reading each tab's plain columns via the
    existing CSV/gviz export and each tab's importance/urgency via the Apps Script endpoint only
    (CSV/gviz export includes hidden columns' raw values regardless of Sheets-UI hidden state,
    which would defeat "invisible to the user"). Fetching happens at the app's normal sync
-   boundaries (manual "Sync Lists" + any future periodic sync) and the result is persisted
+   boundaries (the triggers above + any future periodic sync) and the result is persisted
    locally between syncs - no new per-action/live network dependency beyond that.
 7. From an item's card, the user can set a 0-100% progress value (via "Priority & progress";
    ActiveTasks-local only, never written to the Sheet - a `Progress` column was considered and
