@@ -139,11 +139,17 @@ implements this contract.
 
 ## Screens
 
-1. **Settings** - paste/QR-scan the **connection code** (Web App URL plus secret key; shown with
-   the key masked, and never logged in full); "Sync Lists" re-runs the import; importance-weight
-   slider (`0.5`-`4.0`, default `2.0`); items-per-list count (`1`-`10`, default `5`, a single
-   global setting). A bare Sheet URL is no longer enough: ActiveTasks can't work without priorities,
-   so it needs the connection code.
+1. **Settings** - a **"Google Sheet Connection"** card, identical in layout and wording to
+   MicroTasking's section of the same name (only "list" vs "task category" and what the Web App is
+   for differ): why-a-Sheet-URL text, *Google Sheet URL* box, **Scan Sheet QR Code**, why-a-Web-App
+   text, *Apps Script Web App URL* box (to become the **connection code**: Web App URL plus secret
+   key, shown masked and never logged in full), **Scan Web App QR Code**, then the one action
+   button, **Sync Lists** (disabled while syncing or with a blank Sheet URL), and its status message.
+   Both scan buttons open the same scanner and route the result by content (`parseSetupQr`), never
+   by which button was pressed. Below the card, unrelated to it: importance-weight slider
+   (`0.5`-`4.0`, default `2.0`) and items-per-list count (`1`-`10`, default `5`, a single global
+   setting). A bare Sheet URL is no longer enough: ActiveTasks can't work without priorities, so it
+   needs the connection code.
 2. **Carousel** (home screen, and the *only* list screen - there is no overview of lists with
    counts, and no separate "see everything" list-detail view) - a horizontal, swipeable page per
    list, each showing that list's top N open items by priority score. A page indicator (dots)
@@ -176,10 +182,11 @@ implements this contract.
 - **On-device verification of the referral round-trip.** Both apps' code is written and compiles;
   neither side has been exercised end-to-end against a real deployed Web App yet. See
   PUNCH_LIST.md item 1.
-- **Connection-code QR** (one code for both apps) and ActiveTasks's `parseSetupQr` scanner, **Add
-  item**, re-triage write-through, and reading via `getTasks` - all specified in MicroTasking's
-  `SPEC.md` "Sheet connection & API", none built here yet. Until then, the Web App URL is pasted
-  into Settings by hand and the Sheet is still read through the public export.
+- **Connection-code QR** (one code for both apps), **Add item**, re-triage write-through, and
+  reading via `getTasks` - all specified in MicroTasking's `SPEC.md` "Sheet connection & API", none
+  built here yet. Until then the Sheet is still read through the public export. (The scanner half
+  is built: `parseSetupQr` classifies each scanned line as Web App URL or Sheet URL, so the
+  onboarding page's separate Sheet and Web App QRs each set only their own field.)
 - Background reminders/notifications - this is a pull list, not a nudger; no alarms, no
   permissions beyond internet/camera.
 - Bulk-editing a list's sheet-backed items, reordering lists, or a *user-visible* priority column

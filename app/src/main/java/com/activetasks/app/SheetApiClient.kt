@@ -5,6 +5,31 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
+/** What a scanned setup QR code carried: either value may be absent (see [parseSetupQr]). */
+data class SetupQrPayload(val sheetUrl: String?, val webAppUrl: String?)
+
+/**
+ * Apps Script Web App URLs live on script.google.com (`/macros/s/<id>/exec`, or
+ * `/a/macros/<domain>/s/<id>/exec` for Workspace accounts); a Google Sheet URL never does.
+ * Same classification as MicroTasking's `looksLikeWebAppUrl`.
+ */
+fun looksLikeWebAppUrl(text: String): Boolean =
+    text.startsWith("http", ignoreCase = true) && text.contains("script.google.com/", ignoreCase = true)
+
+/**
+ * Splits a scanned setup QR (one URL per line) into its Sheet URL and Web App URL by what each
+ * line looks like rather than by position, so a code carrying only the Web App URL, only the Sheet
+ * URL, or both (older combined codes) in either order all work. Mirrors MicroTasking's
+ * `parseSetupQr`.
+ */
+fun parseSetupQr(scannedText: String): SetupQrPayload {
+    val lines = scannedText.lines().map { it.trim() }.filter { it.isNotEmpty() }
+    return SetupQrPayload(
+        sheetUrl = lines.firstOrNull { !looksLikeWebAppUrl(it) },
+        webAppUrl = lines.firstOrNull { looksLikeWebAppUrl(it) }
+    )
+}
+
 /**
  * Client for the Apps Script Web App that both ActiveTasks and MicroTasking use to read/write the
  * hidden, protected Importance/Urgency columns (and to delete a fully-completed row). Those two

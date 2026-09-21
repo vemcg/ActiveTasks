@@ -34,6 +34,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -171,7 +173,7 @@ fun ActiveTasksApp(
     fun runSync() {
         if (sheetUrl.isBlank()) return
         if (appsScriptUrl.isBlank()) {
-            syncMessage = "Set the Apps Script Web App URL below to sync referred items."
+            syncMessage = "Set the Apps Script Web App URL above to sync referred items."
             return
         }
         syncing = true
@@ -230,9 +232,24 @@ fun ActiveTasksApp(
         Screen.QR_SCANNER -> QrScannerScreen(
             onResult = { scanned ->
                 screen = Screen.SETTINGS
-                sheetUrl = scanned
-                onSheetUrlSaved(scanned)
-                runSync()
+                // The onboarding page makes separate Sheet-URL and Web App URL QR codes (older
+                // ones carried both, newline-separated). Each line is classified by what it looks
+                // like, and a setting the scan didn't carry is left as it was.
+                val payload = parseSetupQr(scanned)
+                payload.webAppUrl?.let {
+                    appsScriptUrl = it
+                    onAppsScriptUrlSaved(it)
+                }
+                val scannedSheetUrl = payload.sheetUrl
+                if (scannedSheetUrl != null) {
+                    sheetUrl = scannedSheetUrl
+                    onSheetUrlSaved(scannedSheetUrl)
+                    runSync()
+                } else if (payload.webAppUrl != null) {
+                    syncMessage = "Web App URL saved."
+                } else {
+                    syncMessage = "That QR code was empty - nothing was changed."
+                }
             },
             onCancel = { screen = Screen.SETTINGS }
         )
@@ -327,40 +344,68 @@ fun SettingsScreen(
                 }
             }
         )
-        Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
-            Text(
-                "Point ActiveTasks at the same Google Sheet you already use for MicroTasking. Items " +
-                    "only show up here once you've referred them from MicroTasking's task queue.",
-                style = MaterialTheme.typography.bodyMedium
-            )
-            OutlinedTextField(
-                value = sheetUrl,
-                onValueChange = onSheetUrlChange,
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                label = { Text("Google Sheet URL") }
-            )
-            OutlinedTextField(
-                value = appsScriptUrl,
-                onValueChange = onAppsScriptUrlChange,
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                label = { Text("Apps Script Web App URL") }
-            )
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
-                    Text(" Scan QR")
+        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
+            // Same title, order and wording as MicroTasking's "Google Sheet Connection" section
+            // (only the "list" / what-the-Web-App-is-for words differ) - keep the two in sync.
+            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Google Sheet Connection", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Your tasks live in a Google Sheet you own. Paste its URL, or scan the Sheet " +
+                            "QR code from the onboarding page, so the app can read it - each tab " +
+                            "becomes a list.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                    OutlinedTextField(
+                        value = sheetUrl,
+                        onValueChange = onSheetUrlChange,
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                        label = { Text("Google Sheet URL") }
+                    )
+                    OutlinedButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
+                        Text(" Scan Sheet QR Code")
+                    }
+
+                    Text(
+                        "The Web App is a small script inside your Sheet that lets the app write back " +
+                            "to it - completing and re-prioritizing items. Deploy it once from your " +
+                            "Sheet (Extensions > Apps Script > Deploy > New deployment > Web app), " +
+                            "then paste its URL or scan its QR code from the onboarding page.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 20.dp)
+                    )
+                    OutlinedTextField(
+                        value = appsScriptUrl,
+                        onValueChange = onAppsScriptUrlChange,
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                        label = { Text("Apps Script Web App URL") },
+                        placeholder = { Text("https://script.google.com/macros/s/…/exec") }
+                    )
+                    // Both scan buttons open the same scanner; the result is routed by what the
+                    // scanned text looks like (parseSetupQr), never by which button was pressed.
+                    OutlinedButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
+                        Text(" Scan Web App QR Code")
+                    }
+
+                    Button(
+                        onClick = onSync,
+                        enabled = sheetUrl.isNotBlank() && !syncing,
+                        modifier = Modifier.fillMaxWidth().padding(top = 20.dp)
+                    ) {
+                        Text(if (syncing) "Syncing…" else "Sync Lists")
+                    }
+                    if (syncMessage.isNotBlank()) {
+                        Text(
+                            syncMessage,
+                            modifier = Modifier.padding(top = 12.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
-                Button(onClick = onSync, enabled = sheetUrl.isNotBlank() && !syncing, modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    Text(if (syncing) "Syncing…" else "Sync Lists")
-                }
-            }
-            if (syncMessage.isNotBlank()) {
-                Text(
-                    syncMessage,
-                    modifier = Modifier.padding(top = 16.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
 
             Text(
