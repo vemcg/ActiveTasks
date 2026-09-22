@@ -200,10 +200,10 @@ implements this contract.
      score (earlier list wins ties; with nothing referred anywhere, the first list). Only a page
      the user swiped to is recorded as "last opened" - the page it merely opened on is not, so the
      highest-priority fallback keeps applying until they navigate.
-   - **Each item is a card**, MicroTasking-style: the task text, then "Progress N%" (no quadrant
-     badge - see "Priority model" above), then two rows of buttons, not a text-link row: **Complete
-     (for now)** above **Open link** (when the row has one) on the left, **Priority & progress**
-     (opens the dialog below) directly above **Fully complete** on the right. No checkbox and no
+   - **Each item is a card**, MicroTasking-style: the task text, then **Open link** (full-width,
+     only when the row has one), then its bottom two rows - "Progress: N%" beside its **Priority &
+     progress** button (opens the dialog below), then **Complete (for now)** beside **Fully
+     complete** underneath (no quadrant badge - see "Priority model" above). No checkbox and no
      trash/delete icon. A failed Sheet write leaves the item in place and shows the error above the
      list.
 3. **Priority & progress** (dialog, from an item's card) - the continuous matrix widget

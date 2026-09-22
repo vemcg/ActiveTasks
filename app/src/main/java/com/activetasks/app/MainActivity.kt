@@ -739,33 +739,33 @@ fun ToDoItemRow(
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(item.description, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                "Progress ${item.progress}%",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-            // Left column: Complete (for now) above, Open link below (if any). Right column:
-            // Priority & progress directly above Fully complete - both real buttons, not the
-            // text-link row this used to be.
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onCompleteForNow, enabled = !busy, modifier = Modifier.weight(1f)) {
-                    Text("Complete (for now)")
-                }
-                OutlinedButton(onClick = onAdjust, enabled = !busy, modifier = Modifier.weight(1f)) {
+            if (item.link.isNotBlank()) {
+                OutlinedButton(
+                    onClick = {
+                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.link))) }
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                ) { Text("Open link") }
+            }
+            // The bottom two rows: "Progress: N%" beside its Priority & progress button, then
+            // Complete (for now) beside Fully complete underneath.
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Progress: ${item.progress}%",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedButton(onClick = onAdjust, enabled = !busy) {
                     Text("Priority & progress")
                 }
             }
             Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (item.link.isNotBlank()) {
-                    OutlinedButton(
-                        onClick = {
-                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.link))) }
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("Open link") }
-                } else {
-                    Spacer(modifier = Modifier.weight(1f))
+                OutlinedButton(onClick = onCompleteForNow, enabled = !busy, modifier = Modifier.weight(1f)) {
+                    Text("Complete (for now)")
                 }
                 Button(onClick = onFullyComplete, enabled = !busy, modifier = Modifier.weight(1f)) {
                     Text("Fully complete")
