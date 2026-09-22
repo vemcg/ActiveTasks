@@ -164,6 +164,11 @@ fun ActiveTasksApp(
     var syncing by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
+    // A tab with nothing currently referred to it doesn't get a carousel page at all - only tabs
+    // that actually have a live (non-done) item show up, so swiping only ever lands on lists with
+    // something in them. `lists` itself (every known Sheet tab) still distinguishes "never synced"
+    // from "synced, nothing referred" for the empty-state message below.
+    val visibleLists = lists.filter { listName -> items.any { it.list == listName && !it.done } }
 
     fun persistItems(newItems: List<ToDoItem>) {
         items = newItems
@@ -319,11 +324,12 @@ fun ActiveTasksApp(
             onBack = { screen = Screen.CAROUSEL }
         )
         Screen.CAROUSEL -> CarouselScreen(
-            lists = lists,
+            hasSyncedLists = lists.isNotEmpty(),
+            visibleLists = visibleLists,
             items = items,
             importanceWeight = importanceWeight,
             topN = topN,
-            initialList = initialListName(lists, items, importanceWeight, lastList),
+            initialList = initialListName(visibleLists, items, importanceWeight, lastList),
             busy = busy,
             actionError = actionError,
             onListOpened = { list ->
@@ -540,7 +546,8 @@ fun SettingsScreen(
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun CarouselScreen(
-    lists: List<String>,
+    hasSyncedLists: Boolean,
+    visibleLists: List<String>,
     items: List<ToDoItem>,
     importanceWeight: Float,
     topN: Int,
@@ -554,15 +561,15 @@ fun CarouselScreen(
     onFullyComplete: (ToDoItem) -> Unit
 ) {
     val pagerState = rememberPagerState(
-        initialPage = lists.indexOf(initialList).coerceAtLeast(0),
-        pageCount = { lists.size }
+        initialPage = visibleLists.indexOf(initialList).coerceAtLeast(0),
+        pageCount = { visibleLists.size }
     )
     // Only a page the user actually swiped to counts as "last opened"; the initial page is just
     // where we started (possibly the highest-priority fallback), so it isn't recorded.
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage }
             .drop(1)
-            .collect { page -> lists.getOrNull(page)?.let(onListOpened) }
+            .collect { page -> visibleLists.getOrNull(page)?.let(onListOpened) }
     }
     Scaffold(
         topBar = {
@@ -576,14 +583,18 @@ fun CarouselScreen(
             )
         }
     ) { padding ->
-        if (lists.isEmpty()) {
+        // A list with nothing currently referred to it gets no page at all (see visibleLists in
+        // ActiveTasksApp) - only "never synced" vs "synced, but nothing referred anywhere" needs
+        // distinguishing here, since either way there's nothing to swipe through.
+        if (visibleLists.isEmpty()) {
             Column(
                 modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    "No lists yet. Open Settings and sync your Google Sheet to get started.",
+                    if (hasSyncedLists) "No tasks referred yet."
+                    else "No lists yet. Open Settings and sync your Google Sheet to get started.",
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
@@ -593,16 +604,16 @@ fun CarouselScreen(
             // Sub-header under the "ActiveTasks" app-bar title: which list is currently showing
             // (e.g. "Must Do", "Alice"), MicroTasking-style page heading.
             Text(
-                lists.getOrNull(pagerState.currentPage) ?: "",
+                visibleLists.getOrNull(pagerState.currentPage) ?: "",
                 modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp),
                 style = MaterialTheme.typography.headlineMedium
             )
-            if (lists.size > 1) {
+            if (visibleLists.size > 1) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    lists.forEachIndexed { index, _ ->
+                    visibleLists.forEachIndexed { index, _ ->
                         Box(
                             modifier = Modifier
                                 .weight(1f)
@@ -625,9 +636,12 @@ fun CarouselScreen(
                 )
             }
             HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
-                val listName = lists[page]
+                val listName = visibleLists[page]
                 val topItems = sortedForDisplay(items.filter { it.list == listName && !it.done }, importanceWeight).take(topN)
                 if (topItems.isEmpty()) {
+                    // Reachable mid-session: completing this list's last item removes it from
+                    // visibleLists on the next recomposition, but the pager can briefly still be
+                    // sitting on this now-empty page in between.
                     Column(
                         modifier = Modifier.fillMaxSize().padding(24.dp),
                         verticalArrangement = Arrangement.Center,

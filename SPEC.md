@@ -9,9 +9,11 @@ and confirmed by the user on both sides (2026-09-18).
 ## Lists
 
 - Each Google Sheet tab (excluding a README tab) is one to-do list, named after the tab.
-- A tab with zero rows still counts as a live, empty list (`known_lists`, refreshed on every
-  successful sync) - it shows up in the carousel (see "Screens") with "0 open" rather than not
-  existing.
+- A tab with zero rows still counts as a live list (`known_lists`, refreshed on every successful
+  sync) - but it only gets a page in the carousel once it has at least one referred (non-done)
+  item; a tab with nothing currently referred to it is skipped entirely rather than showing up
+  empty (see "Screens"). `known_lists` still distinguishes "never synced" from "synced, nothing
+  referred anywhere" for the carousel's empty-state message.
 
 ## Items
 
@@ -162,9 +164,13 @@ implements this contract.
    counts, and no separate "see everything" list-detail view) - the app bar title is always
    "ActiveTasks" (MicroTasking-style, a fixed app-name title rather than changing per page); the
    current list's name (e.g. "Must Do") is a headlineMedium sub-header underneath it. A horizontal,
-   swipeable page per list, each showing that list's top N open items by priority score. A page
-   indicator (dots) shows position. A tab with zero qualifying (referred) items still shows up,
-   empty, when swiped to.
+   swipeable page **per list that currently has at least one referred item** - a list with nothing
+   referred to it gets no page and never appears, so the page-indicator dots only ever count lists
+   with something in them. Each page shows that list's top N open items by priority score.
+   - **No lists have anything referred yet** (whether or not the Sheet has been synced): instead of
+     the carousel, a single centered message - "No lists yet. Open Settings and sync your Google
+     Sheet to get started." before the first sync, or "No tasks referred yet." after a sync that
+     found no referred rows anywhere.
    - **Which page it opens on** (`initialListName`): the list the user last swiped to (persisted
      as `last_list`); if they never have, the list whose top open item has the highest priority
      score (earlier list wins ties; with nothing referred anywhere, the first list). Only a page
