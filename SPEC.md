@@ -141,22 +141,30 @@ implements this contract.
 
 ## Screens
 
-1. **Settings** - a **"Google Sheet Connection"** card, identical in layout and wording to
-   MicroTasking's section of the same name (only "list" vs "task category" and what the Web App is
-   for differ): why-a-Sheet-URL text, *Google Sheet URL* box, **Scan Sheet QR Code**, why-a-Web-App
-   text, *Apps Script Web App URL* box (to become the **connection code**: Web App URL plus secret
-   key, shown masked and never logged in full), **Scan Web App QR Code**, then the one action
-   button, **Sync Lists** (disabled while syncing or with a blank Sheet URL), and its status message.
-   Both scan buttons open the same scanner and route the result by content (`parseSetupQr`), never
-   by which button was pressed. Below the card, unrelated to it: importance-weight slider
-   (`0.5`-`4.0`, default `2.0`) and items-per-list count (`1`-`10`, default `5`, a single global
-   setting). A bare Sheet URL is no longer enough: ActiveTasks can't work without priorities, so it
-   needs the connection code.
+1. **Settings** - three collapsible accordion cards (at most one open at a time), same accordion
+   pattern, "Settings" headlineMedium page heading, and section-header styling as MicroTasking's
+   Settings screen (`sectionHeader`), so the two apps' Settings screens read as one design:
+   - **"Google Sheet Connection"** (open by default) - identical in layout and wording to
+     MicroTasking's section of the same name (only "list" vs "task category" and what the Web App
+     is for differ): why-a-Sheet-URL text, *Google Sheet URL* box, **Scan Sheet QR Code**,
+     why-a-Web-App text, *Apps Script Web App URL* box (to become the **connection code**: Web App
+     URL plus secret key, shown masked and never logged in full), **Scan Web App QR Code**, then
+     the one action button, **Sync Lists** (disabled while syncing or with a blank Sheet URL), and
+     its status message. Both scan buttons open the same scanner and route the result by content
+     (`parseSetupQr`), never by which button was pressed. A bare Sheet URL is no longer enough:
+     ActiveTasks can't work without priorities, so it needs the connection code.
+   - **"Priority & Lists"** - importance-weight slider (`0.5`-`4.0`, default `2.0`) and
+     items-per-list count (`1`-`10`, default `5`, a single global setting).
+   - **"About"** - version (`BuildConfig.VERSION_BASE`-`BUILD_NUMBER`) and build metadata
+     (timestamp, git short SHA, git branch), same content and layout as MicroTasking's "About"
+     section.
 2. **Carousel** (home screen, and the *only* list screen - there is no overview of lists with
-   counts, and no separate "see everything" list-detail view) - a horizontal, swipeable page per
-   list, each showing that list's top N open items by priority score. A page indicator (dots)
-   shows position. A tab with zero qualifying (referred) items still shows up, empty, when
-   swiped to.
+   counts, and no separate "see everything" list-detail view) - the app bar title is always
+   "ActiveTasks" (MicroTasking-style, a fixed app-name title rather than changing per page); the
+   current list's name (e.g. "Must Do") is a headlineMedium sub-header underneath it. A horizontal,
+   swipeable page per list, each showing that list's top N open items by priority score. A page
+   indicator (dots) shows position. A tab with zero qualifying (referred) items still shows up,
+   empty, when swiped to.
    - **Which page it opens on** (`initialListName`): the list the user last swiped to (persisted
      as `last_list`); if they never have, the list whose top open item has the highest priority
      score (earlier list wins ties; with nothing referred anywhere, the first list). Only a page

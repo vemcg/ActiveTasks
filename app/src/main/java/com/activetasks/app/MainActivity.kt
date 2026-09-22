@@ -17,6 +17,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,12 +36,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
@@ -368,9 +370,32 @@ fun SettingsScreen(
     canGoBack: Boolean,
     onBack: () -> Unit
 ) {
+    // Accordion: at most one section open at a time. "" means all collapsed. Same pattern, and
+    // the same "Google Sheet Connection" section title/wording, as MicroTasking's SettingsScreen -
+    // keep the two in sync stylistically.
+    var openSection by remember { mutableStateOf("Google Sheet Connection") }
+
+    @Composable
+    fun sectionHeader(title: String) {
+        val expanded = openSection == title
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { openSection = if (expanded) "" else title },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Icon(
+                if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                contentDescription = if (expanded) "Collapse" else "Expand"
+            )
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
-            title = { Text("ActiveTasks Settings") },
+            title = {},
             navigationIcon = {
                 if (canGoBack) {
                     IconButton(onClick = onBack) {
@@ -379,94 +404,135 @@ fun SettingsScreen(
                 }
             }
         )
-        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
-            // Same title, order and wording as MicroTasking's "Google Sheet Connection" section
-            // (only the "list" / what-the-Web-App-is-for words differ) - keep the two in sync.
-            OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Google Sheet Connection", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "Your tasks live in a Google Sheet you own. Paste its URL, or scan the Sheet " +
-                            "QR code from the onboarding page, so the app can read it - each tab " +
-                            "becomes a list.",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
-                    OutlinedTextField(
-                        value = sheetUrl,
-                        onValueChange = onSheetUrlChange,
-                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                        label = { Text("Google Sheet URL") }
-                    )
-                    OutlinedButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                        Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
-                        Text(" Scan Sheet QR Code")
-                    }
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            item {
+                Text(
+                    "Settings",
+                    modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+                    style = MaterialTheme.typography.headlineMedium
+                )
+            }
 
-                    Text(
-                        "The Web App is a small script inside your Sheet that lets the app write back " +
-                            "to it - completing and re-prioritizing items. Deploy it once from your " +
-                            "Sheet (Extensions > Apps Script > Deploy > New deployment > Web app), " +
-                            "then paste its URL or scan its QR code from the onboarding page.",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(top = 20.dp)
-                    )
-                    OutlinedTextField(
-                        value = appsScriptUrl,
-                        onValueChange = onAppsScriptUrlChange,
-                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                        label = { Text("Apps Script Web App URL") },
-                        placeholder = { Text("https://script.google.com/macros/s/…/exec") }
-                    )
-                    // Both scan buttons open the same scanner; the result is routed by what the
-                    // scanned text looks like (parseSetupQr), never by which button was pressed.
-                    OutlinedButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                        Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
-                        Text(" Scan Web App QR Code")
-                    }
+            item {
+                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        sectionHeader("Google Sheet Connection")
+                        if (openSection == "Google Sheet Connection") {
+                            Text(
+                                "Your tasks live in a Google Sheet you own. Paste its URL, or scan the Sheet " +
+                                    "QR code from the onboarding page, so the app can read it - each tab " +
+                                    "becomes a list.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedTextField(
+                                value = sheetUrl,
+                                onValueChange = onSheetUrlChange,
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Google Sheet URL") }
+                            )
+                            OutlinedButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth()) {
+                                Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
+                                Text(" Scan Sheet QR Code")
+                            }
 
-                    Button(
-                        onClick = onSync,
-                        enabled = sheetUrl.isNotBlank() && !syncing,
-                        modifier = Modifier.fillMaxWidth().padding(top = 20.dp)
-                    ) {
-                        Text(if (syncing) "Syncing…" else "Sync Lists")
-                    }
-                    if (syncMessage.isNotBlank()) {
-                        Text(
-                            syncMessage,
-                            modifier = Modifier.padding(top = 12.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                            Text(
+                                "The Web App is a small script inside your Sheet that lets the app write back " +
+                                    "to it - completing and re-prioritizing items. Deploy it once from your " +
+                                    "Sheet (Extensions > Apps Script > Deploy > New deployment > Web app), " +
+                                    "then paste its URL or scan its QR code from the onboarding page.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedTextField(
+                                value = appsScriptUrl,
+                                onValueChange = onAppsScriptUrlChange,
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Apps Script Web App URL") },
+                                placeholder = { Text("https://script.google.com/macros/s/…/exec") }
+                            )
+                            // Both scan buttons open the same scanner; the result is routed by what the
+                            // scanned text looks like (parseSetupQr), never by which button was pressed.
+                            OutlinedButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth()) {
+                                Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
+                                Text(" Scan Web App QR Code")
+                            }
+
+                            Button(
+                                onClick = onSync,
+                                enabled = sheetUrl.isNotBlank() && !syncing,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(if (syncing) "Syncing…" else "Sync Lists")
+                            }
+                            if (syncMessage.isNotBlank()) {
+                                Text(
+                                    syncMessage,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            Text(
-                "Importance weight: ${"%.1f".format(importanceWeight)}x",
-                style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.padding(top = 24.dp)
-            )
-            Text(
-                "How much more an item's importance counts than its urgency when ranking your " +
-                    "lists (score = importance × weight + urgency).",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Slider(
-                value = importanceWeight,
-                onValueChange = onImportanceWeightChange,
-                valueRange = 0.5f..4f,
-                steps = 6
-            )
-
-            Text("Items per list: $topN", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 12.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = { if (topN > 1) onTopNChange(topN - 1) }) { Text("−") }
-                Text("$topN", modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleMedium)
-                OutlinedButton(onClick = { if (topN < 10) onTopNChange(topN + 1) }) { Text("+") }
+            item {
+                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        sectionHeader("Priority & Lists")
+                        if (openSection == "Priority & Lists") {
+                            Text(
+                                "How much more an item's importance counts than its urgency when ranking " +
+                                    "your lists (score = importance × weight + urgency), and how many items " +
+                                    "each list shows.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                "Importance weight: ${"%.1f".format(importanceWeight)}x",
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                            Slider(
+                                value = importanceWeight,
+                                onValueChange = onImportanceWeightChange,
+                                valueRange = 0.5f..4f,
+                                steps = 6
+                            )
+                            Text("Items per list: $topN", style = MaterialTheme.typography.labelLarge)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedButton(onClick = { if (topN > 1) onTopNChange(topN - 1) }) { Text("−") }
+                                Text("$topN", modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleMedium)
+                                OutlinedButton(onClick = { if (topN < 10) onTopNChange(topN + 1) }) { Text("+") }
+                            }
+                        }
+                    }
+                }
             }
+
+            item {
+                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        sectionHeader("About")
+                        if (openSection == "About") {
+                            Text(
+                                "v${BuildConfig.VERSION_BASE}-${BuildConfig.BUILD_NUMBER}",
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                            Text(
+                                "${BuildConfig.BUILD_TIMESTAMP} - ${BuildConfig.GIT_SHORT_SHA} - ${BuildConfig.GIT_BRANCH}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            item { Spacer(modifier = Modifier.height(16.dp)) }
         }
     }
 }
@@ -501,7 +567,7 @@ fun CarouselScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(lists.getOrNull(pagerState.currentPage) ?: "ActiveTasks") },
+                title = { Text("ActiveTasks") },
                 actions = {
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
@@ -524,6 +590,13 @@ fun CarouselScreen(
             return@Scaffold
         }
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            // Sub-header under the "ActiveTasks" app-bar title: which list is currently showing
+            // (e.g. "Must Do", "Alice"), MicroTasking-style page heading.
+            Text(
+                lists.getOrNull(pagerState.currentPage) ?: "",
+                modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp),
+                style = MaterialTheme.typography.headlineMedium
+            )
             if (lists.size > 1) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
