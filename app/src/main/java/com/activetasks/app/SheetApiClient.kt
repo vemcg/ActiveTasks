@@ -38,19 +38,23 @@ fun parseSetupQr(scannedText: String): SetupQrPayload {
  * would defeat the "invisible to the user" requirement. See SPEC.md "Referral bridge".
  *
  * Contract as deployed by MicroTasking's repo (scripts/populate_google_sheet.js there), confirmed
- * 2026-09-18:
+ * 2026-09-18, `taskId` added since (backward-compatible - optional on both sides):
  *   GET  {webAppUrl}?action=getPriorities
- *        -> {"ok":true,"rows":[{"category","description","importance","urgency"}, ...]} - every
- *           referred row across every tab in one call, not one call per tab.
+ *        -> {"ok":true,"rows":[{"category","description","importance","urgency","taskId"?}, ...]}
+ *           - every referred row across every tab in one call, not one call per tab.
  *   POST {webAppUrl} {"action":"setPriority"|"clearPriority"|"deleteRow","category","description",
- *        ["importance","urgency" for setPriority]} -> {"ok":true} or {"ok":false,"error":"..."}
- * Row identity is always (category = tab name, description = column B text, exact trimmed match),
- * resolved server-side - never a row/gid index.
+ *        "taskId"?, ["importance","urgency" for setPriority]} -> {"ok":true} or
+ *        {"ok":false,"error":"..."}
+ * Row identity is (category = tab name, description = column B text, exact trimmed match) unless
+ * `taskId` is sent, in which case the server matches by that surrogate key instead - never a
+ * row/gid index either way. `taskId` is MicroTasking's per-row surrogate key (its Sheet's hidden
+ * "Task ID" column, stamped once and never recomputed); sending it makes writes survive a
+ * description that's been renamed in the sheet since the row was read.
  */
 data class SheetPriority(val importance: Float, val urgency: Float)
 
 /** One referred row as returned by `getPriorities`, before grouping by tab/category. */
-data class ReferredRow(val category: String, val description: String, val priority: SheetPriority)
+data class ReferredRow(val category: String, val description: String, val taskId: String?, val priority: SheetPriority)
 
 private const val CONNECT_TIMEOUT_MS = 15_000
 private const val READ_TIMEOUT_MS = 15_000
@@ -73,6 +77,7 @@ fun fetchAllPriorities(appsScriptUrl: String): List<ReferredRow> = runCatching {
         ReferredRow(
             category = category,
             description = description,
+            taskId = row.optString("taskId", "").ifBlank { null },
             priority = SheetPriority(
                 importance = row.optDouble("importance", 0.0).toFloat(),
                 urgency = row.optDouble("urgency", 0.0).toFloat()
@@ -97,24 +102,33 @@ private fun postAction(appsScriptUrl: String, body: JSONObject): Boolean = runCa
     responseCode in 200..299 && JSONObject(responseBody).optBoolean("ok", false)
 }.getOrDefault(false)
 
-/** "Complete (for now)": clears importance/urgency so MicroTasking can queue the row again. */
-fun clearSheetPriority(appsScriptUrl: String, category: String, description: String): Boolean =
+/**
+ * "Complete (for now)": clears importance/urgency so MicroTasking can queue the row again.
+ * [taskId], when the item has one, is sent alongside category/description so the write is
+ * rename-proof even if the sheet's description text has changed since this item was imported.
+ */
+fun clearSheetPriority(appsScriptUrl: String, category: String, description: String, taskId: String? = null): Boolean =
     postAction(
         appsScriptUrl,
         JSONObject().apply {
             put("action", "clearPriority")
             put("category", category)
             put("description", description)
+            if (taskId != null) put("taskId", taskId)
         }
     )
 
-/** "Fully complete": deletes the row outright (checkbox + description + link + hidden columns). */
-fun deleteSheetRow(appsScriptUrl: String, category: String, description: String): Boolean =
+/**
+ * "Fully complete": deletes the row outright (checkbox + description + link + hidden columns).
+ * [taskId] is sent the same way and for the same reason as in [clearSheetPriority].
+ */
+fun deleteSheetRow(appsScriptUrl: String, category: String, description: String, taskId: String? = null): Boolean =
     postAction(
         appsScriptUrl,
         JSONObject().apply {
             put("action", "deleteRow")
             put("category", category)
             put("description", description)
+            if (taskId != null) put("taskId", taskId)
         }
     )

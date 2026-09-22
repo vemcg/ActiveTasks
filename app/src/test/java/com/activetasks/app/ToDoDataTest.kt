@@ -36,6 +36,18 @@ class ToDoDataTest {
     }
 
     @Test
+    fun parseToDoCsvRows_readsTaskIdColumnByHeaderText() {
+        val csv = """
+            checked,description,link,Task ID
+            TRUE,Buy milk,,abc-123
+            TRUE,No id yet,,
+        """.trimIndent()
+        val rows = parseToDoCsvRows(csv)
+        assertEquals("abc-123", rows.first { it.description == "Buy milk" }.taskId)
+        assertEquals(null, rows.first { it.description == "No id yet" }.taskId)
+    }
+
+    @Test
     fun parseToDoCsvRows_skipsBlankDescriptions() {
         val csv = """
             checked,description
@@ -68,6 +80,32 @@ class ToDoDataTest {
         assertEquals("sheet-Errands-Buy milk", item.id)
         assertEquals(0.8f, item.importance)
         assertEquals(0.2f, item.urgency)
+    }
+
+    @Test
+    fun toDoItemsFromReferredRows_prefersTaskIdForIdAndPriorityMatch_whenRowHasOne() {
+        val csv = """
+            checked,description,link,Task ID
+            TRUE,Buy milk,,abc-123
+        """.trimIndent()
+        // Keyed by "id:<taskId>", matching how MainActivity builds this map from fetchAllPriorities.
+        val priorities = mapOf("id:abc-123" to SheetPriority(importance = 0.8f, urgency = 0.2f))
+        val item = toDoItemsFromReferredRows(csv, "Errands", priorities).single()
+        assertEquals("sheet-abc-123", item.id)
+        assertEquals("abc-123", item.taskId)
+        assertEquals(0.8f, item.importance)
+    }
+
+    @Test
+    fun toDoItemsFromReferredRows_fallsBackToDescriptionMatch_whenRowHasNoTaskId() {
+        val csv = """
+            checked,description,link,Task ID
+            TRUE,Buy milk,,
+        """.trimIndent()
+        val priorities = mapOf("Buy milk" to SheetPriority(importance = 0.8f, urgency = 0.2f))
+        val item = toDoItemsFromReferredRows(csv, "Errands", priorities).single()
+        assertEquals("sheet-Errands-Buy milk", item.id)
+        assertEquals(null, item.taskId)
     }
 
     @Test
@@ -163,8 +201,9 @@ class ToDoDataTest {
     fun readWriteToDoItems_roundTrips() {
         val items = listOf(
             ToDoItem(
-                id = "sheet-List-A", description = "A", list = "List", link = "https://x",
-                importance = 0.75f, urgency = 0.25f, progress = 40, done = true, addedAtEpochMs = 100, doneAtEpochMs = 200
+                id = "sheet-abc-123", description = "A", list = "List", link = "https://x",
+                importance = 0.75f, urgency = 0.25f, progress = 40, done = true, addedAtEpochMs = 100, doneAtEpochMs = 200,
+                taskId = "abc-123"
             )
         )
         val roundTripped = readToDoItems(writeToDoItems(items))

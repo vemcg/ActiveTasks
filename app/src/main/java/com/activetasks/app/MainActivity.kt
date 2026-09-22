@@ -213,7 +213,11 @@ fun ActiveTasksApp(
             val imported = withContext(Dispatchers.IO) {
                 val prioritiesByTab = fetchAllPriorities(appsScriptUrl)
                     .groupBy { it.category }
-                    .mapValues { (_, rows) -> rows.associate { it.description to it.priority } }
+                    .mapValues { (_, rows) ->
+                        // Keyed by taskId (preferred) when the row has one, else by description
+                        // text - see toDoItemsFromReferredRows, which looks up the same way.
+                        rows.associate { (it.taskId?.let { id -> "id:$id" } ?: it.description) to it.priority }
+                    }
                 tabs.flatMap { tab ->
                     toDoItemsFromReferredRows(tab.csv, tab.tabName, prioritiesByTab[tab.tabName].orEmpty())
                 }
@@ -245,7 +249,7 @@ fun ActiveTasksApp(
         busy = true
         actionError = ""
         coroutineScope.launch {
-            val ok = withContext(Dispatchers.IO) { clearSheetPriority(appsScriptUrl, item.list, item.description) }
+            val ok = withContext(Dispatchers.IO) { clearSheetPriority(appsScriptUrl, item.list, item.description, item.taskId) }
             busy = false
             if (ok) {
                 removedDuringSync += item.id
@@ -261,7 +265,7 @@ fun ActiveTasksApp(
         busy = true
         actionError = ""
         coroutineScope.launch {
-            val ok = withContext(Dispatchers.IO) { deleteSheetRow(appsScriptUrl, item.list, item.description) }
+            val ok = withContext(Dispatchers.IO) { deleteSheetRow(appsScriptUrl, item.list, item.description, item.taskId) }
             busy = false
             if (ok) {
                 removedDuringSync += item.id

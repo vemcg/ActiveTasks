@@ -21,7 +21,11 @@ data class ToDoItem(
     val progress: Int = 0,
     val done: Boolean = false,
     val addedAtEpochMs: Long = System.currentTimeMillis(),
-    val doneAtEpochMs: Long? = null
+    val doneAtEpochMs: Long? = null,
+    // MicroTasking's per-row surrogate key (its Sheet's hidden "Task ID" column), when the sheet
+    // row carries one - see [toDoItemsFromReferredRows]. Null for rows from a sheet/script version
+    // that predates it; such items keep matching by list+description text until re-synced.
+    val taskId: String? = null
 )
 
 /** Default importance weight (matches the old fixed important*2 + urgent formula's ratio). */
@@ -58,6 +62,9 @@ fun sortedForDisplay(items: List<ToDoItem>, importanceWeight: Float): List<ToDoI
 private fun JSONObject.optNullableLong(key: String): Long? =
     if (has(key) && !isNull(key)) getLong(key) else null
 
+private fun JSONObject.optNullableString(key: String): String? =
+    if (has(key) && !isNull(key)) getString(key) else null
+
 private fun itemToJson(item: ToDoItem): JSONObject = JSONObject().apply {
     put("id", item.id)
     put("description", item.description)
@@ -69,6 +76,7 @@ private fun itemToJson(item: ToDoItem): JSONObject = JSONObject().apply {
     put("done", item.done)
     put("addedAtEpochMs", item.addedAtEpochMs)
     put("doneAtEpochMs", item.doneAtEpochMs ?: JSONObject.NULL)
+    put("taskId", item.taskId ?: JSONObject.NULL)
 }
 
 private fun itemFromJson(json: JSONObject): ToDoItem = ToDoItem(
@@ -81,7 +89,8 @@ private fun itemFromJson(json: JSONObject): ToDoItem = ToDoItem(
     progress = json.optInt("progress", 0),
     done = json.optBoolean("done", false),
     addedAtEpochMs = json.optLong("addedAtEpochMs", System.currentTimeMillis()),
-    doneAtEpochMs = json.optNullableLong("doneAtEpochMs")
+    doneAtEpochMs = json.optNullableLong("doneAtEpochMs"),
+    taskId = json.optNullableString("taskId")
 )
 
 fun readToDoItems(json: String): List<ToDoItem> = runCatching {
@@ -94,16 +103,18 @@ fun writeToDoItems(items: List<ToDoItem>): String = JSONArray().apply {
 }.toString()
 
 /**
- * One sheet row's description/link, as read from the plain CSV export (columns A-C only -
- * importance/urgency never appear there, see [SheetPriority]/[fetchTabPriorities]).
+ * One sheet row's description/link/task-id, as read from the plain CSV export - importance/urgency
+ * never appear there, see [SheetPriority]/[fetchAllPriorities]. The CSV export carries every
+ * column regardless of Sheets-UI hidden state, so the hidden "Task ID" column (MicroTasking's
+ * per-row surrogate key) rides along here the same as the visible description/link columns.
  */
-data class SheetRow(val description: String, val link: String, val checked: Boolean)
+data class SheetRow(val description: String, val link: String, val checked: Boolean, val taskId: String? = null)
 
 /**
- * Parses one sheet tab's CSV rows (columns A-C only). Column A is the enabled checkbox (a Google
- * Sheets checkbox exports "TRUE"/"FALSE"; a tab with no checkboxes at all treats every row as
- * checked). Description/link columns are matched by header text so column order/extra columns
- * don't break parsing.
+ * Parses one sheet tab's CSV rows. Column A is the enabled checkbox (a Google Sheets checkbox
+ * exports "TRUE"/"FALSE"; a tab with no checkboxes at all treats every row as checked).
+ * Description/link/Task ID columns are matched by header text so column order/extra columns don't
+ * break parsing.
  */
 fun parseToDoCsvRows(csvText: String): List<SheetRow> {
     if (csvText.isBlank()) return emptyList()
@@ -118,6 +129,7 @@ fun parseToDoCsvRows(csvText: String): List<SheetRow> {
     val header = rows.first().map { it.lowercase() }
     val descriptionIndex = header.indexOfFirst { it.contains("description") }
     val linkIndex = header.indexOfFirst { it.contains("link") || it.contains("url") }
+    val taskIdIndex = header.indexOfFirst { it.contains("task id") }
     if (descriptionIndex == -1) return emptyList()
 
     val dataRows = rows.drop(1)
@@ -129,16 +141,22 @@ fun parseToDoCsvRows(csvText: String): List<SheetRow> {
         val description = row[descriptionIndex].trim()
         if (description.isEmpty()) return@mapIndexedNotNull null
         val checked = if (tabUsesCheckboxes) columnA[index] == "true" else true
-        SheetRow(description = description, link = row.getOrNull(linkIndex).orEmpty().trim(), checked = checked)
+        val taskId = row.getOrNull(taskIdIndex)?.trim()?.ifEmpty { null }
+        SheetRow(description = description, link = row.getOrNull(linkIndex).orEmpty().trim(), checked = checked, taskId = taskId)
     }
 }
 
 /**
  * Gated ingestion: builds to-do items for [listName] from this tab's plain CSV rows plus the
  * importance/urgency values already fetched for that tab via the Apps Script endpoint (see
- * [fetchTabPriorities]). Only checked rows that MicroTasking has actually referred (present in
- * [priorities], keyed by description) become items - a row just checked in the sheet directly,
- * never referred, stays MicroTasking's task and never shows up here. See SPEC.md "Items".
+ * [fetchAllPriorities]). Only checked rows that MicroTasking has actually referred (present in
+ * [priorities]) become items - a row just checked in the sheet directly, never referred, stays
+ * MicroTasking's task and never shows up here. See SPEC.md "Items".
+ *
+ * [priorities] is keyed by `"id:<taskId>"` for rows carrying a surrogate key and by plain
+ * description text otherwise, matching how callers build it from [fetchAllPriorities]'s
+ * [ReferredRow]s - a row is looked up by taskId first, falling back to description only when the
+ * row (or the referral) predates the surrogate key.
  */
 fun toDoItemsFromReferredRows(
     csvText: String,
@@ -147,15 +165,17 @@ fun toDoItemsFromReferredRows(
 ): List<ToDoItem> = parseToDoCsvRows(csvText)
     .filter { it.checked }
     .mapNotNull { row ->
-        val priority = priorities[row.description] ?: return@mapNotNull null
+        val priority = row.taskId?.let { priorities["id:$it"] } ?: priorities[row.description] ?: return@mapNotNull null
         ToDoItem(
             // Deterministic so a re-sync recognizes the same row instead of duplicating it.
-            // Editing a description in the sheet therefore reads as a new item, same convention
-            // MicroTasking's task-pool import uses.
-            id = "sheet-$listName-${row.description}",
+            // Preferring taskId (when the row has one) makes a description rename in the sheet
+            // survive as the same item, same convention MicroTasking's task-pool import now uses;
+            // without one, editing the description still reads as a new item as before.
+            id = row.taskId?.let { "sheet-$it" } ?: "sheet-$listName-${row.description}",
             description = row.description,
             list = listName,
             link = row.link,
+            taskId = row.taskId,
             importance = priority.importance,
             urgency = priority.urgency
         )
