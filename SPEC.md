@@ -58,8 +58,11 @@ layout below, just continuous instead of four discrete cells:
 Display order is a computed score, `importance * importanceWeight + urgency`, descending, ties
 broken by add time (older first). **`importanceWeight` is a user Settings value, not a hardcoded
 formula** - MicroTasking always writes raw, unweighted importance/urgency; the weighting that
-turns those into a ranking is entirely ActiveTasks's concern, adjustable in Settings (default `2.0`,
-i.e. the old fixed `important*2 + urgent` ratio as a starting point, range `0.5`-`4.0`).
+turns those into a ranking is entirely ActiveTasks's concern, adjustable in Settings via the
+"Priority & Lists" slider (default `2.0`, one stop toward "Importance" - the old fixed
+`important*2 + urgent` ratio as a starting point; five stops, `0.25`-`4.0`, doubling/halving from
+`1.0` at center - see "Screens"). The formula and the number are never shown to the user; the
+slider only ever shows which of "Importance"/"Urgency" currently counts for more, by font size.
 
 `Quadrant`/`quadrant()` still exist as a coarse 0.5-threshold bucketing of the continuous values,
 used only for badge label/color - the real ranking always uses the continuous score above.
@@ -147,8 +150,16 @@ implements this contract.
    least one Sheet sync has ever completed). Below it, three collapsible accordion cards (at most
    one open at a time), same accordion pattern and section-header styling as MicroTasking's
    Settings screen (`sectionHeader`), in this order:
-   - **"Priority & Lists"** - importance-weight slider (`0.5`-`4.0`, default `2.0`) and
-     items-per-list count (`1`-`10`, default `5`, a single global setting).
+   - **"Priority & Lists"** - a 5-stop, no-numbers slider: "Importance" and "Urgency" labels sit at
+     opposite ends, and the label whose side you slide toward grows (the other shrinks) - centered
+     is equal, deliberately with no visible formula or weight number (`priorityTiltFontSize`,
+     `PRIORITY_TILT_WEIGHTS` in `MainActivity.kt`). Each stop just doubles/halves
+     `ToDoItem.importanceWeight` from its neighbor (`4.0, 2.0, 1.0, 0.5, 0.25`; unchanged
+     `DEFAULT_IMPORTANCE_WEIGHT = 2.0`, one stop left of center - importance favored slightly out of
+     the box, same ratio as before this UI existed). A persisted weight that isn't exactly one of
+     the five stops (from an older build, or a value some other client wrote) snaps to the nearest
+     one when Settings opens. Below it, items-per-list count (`1`-`10`, default `5`, a single
+     global setting).
    - **"Google Sheet Connection"** - open by default only when the Sheet URL isn't set yet (a
      not-yet-connected setup); once connected, nothing pre-opens, since it's no longer the section
      most visits need. Identical in layout and wording to MicroTasking's section of the same name

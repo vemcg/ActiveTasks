@@ -82,6 +82,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.google.mlkit.vision.barcode.BarcodeScanning
@@ -89,6 +90,7 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.drop
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -364,6 +366,21 @@ fun ActiveTasksApp(
     }
 }
 
+// The Priority & Lists slider's five stops, step -2 (full "Importance" side) .. +2 (full
+// "Urgency" side), each just doubling/halving the previous stop's weight - 0 is exactly 1f, so
+// centering the slider always means "equal", regardless of how DEFAULT_IMPORTANCE_WEIGHT is set.
+private val PRIORITY_TILT_WEIGHTS = mapOf(-2 to 4f, -1 to 2f, 0 to 1f, 1 to 0.5f, 2 to 0.25f)
+
+/** Snaps a persisted (possibly legacy/continuous) importanceWeight to the nearest slider stop. */
+private fun priorityTiltFromWeight(weight: Float): Float =
+    PRIORITY_TILT_WEIGHTS.entries.minByOrNull { (_, stopWeight) -> kotlin.math.abs(stopWeight - weight) }!!.key.toFloat()
+
+private fun weightFromPriorityTilt(tilt: Float): Float =
+    PRIORITY_TILT_WEIGHTS.getValue(tilt.roundToInt().coerceIn(-2, 2))
+
+/** Font size (sp) for one side's label at slider step [step] (-2..2) - biggest at -2, smallest at +2. */
+private fun priorityTiltFontSize(step: Int): Int = 22 - step.coerceIn(-2, 2) * 4
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -385,7 +402,10 @@ fun SettingsScreen(
     // immediately and this screen remounts with the new values as its initial state).
     var sheetUrl by remember { mutableStateOf(initialSheetUrl) }
     var appsScriptUrl by remember { mutableStateOf(initialAppsScriptUrl) }
-    var importanceWeight by remember { mutableStateOf(initialImportanceWeight) }
+    // The slider's own value: -2 (full left, "Importance" biggest) .. +2 (full right, "Urgency"
+    // biggest), 0 centered = equal. Converted to/from the persisted importanceWeight float only at
+    // the edges (initial snap-in, and Save) - see priorityTiltFromWeight/weightFromPriorityTilt.
+    var priorityTilt by remember { mutableStateOf(priorityTiltFromWeight(initialImportanceWeight)) }
     var topN by remember { mutableStateOf(initialTopN) }
     // Accordion: at most one section open at a time. "" means all collapsed. Same pattern as
     // MicroTasking's SettingsScreen - keep the two in sync stylistically. Google Sheet Connection
@@ -434,21 +454,26 @@ fun SettingsScreen(
                         sectionHeader("Priority & Lists")
                         if (openSection == "Priority & Lists") {
                             Text(
-                                "How much more an item's importance counts than its urgency when ranking " +
-                                    "your lists (score = importance × weight + urgency), and how many items " +
-                                    "each list shows.",
+                                "How your lists weigh importance against urgency. Slide toward " +
+                                    "whichever should count for more - the middle weighs them the same.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Text(
-                                "Importance weight: ${"%.1f".format(importanceWeight)}x",
-                                style = MaterialTheme.typography.labelLarge
-                            )
+                            // No numbers, no formula - which word is bigger IS the setting.
+                            val tiltStep = priorityTilt.roundToInt().coerceIn(-2, 2)
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.Bottom
+                            ) {
+                                Text("Importance", fontSize = priorityTiltFontSize(tiltStep).sp)
+                                Text("Urgency", fontSize = priorityTiltFontSize(-tiltStep).sp)
+                            }
                             Slider(
-                                value = importanceWeight,
-                                onValueChange = { importanceWeight = it },
-                                valueRange = 0.5f..4f,
-                                steps = 6
+                                value = priorityTilt,
+                                onValueChange = { priorityTilt = it },
+                                valueRange = -2f..2f,
+                                steps = 3
                             )
                             Text("Items per list: $topN", style = MaterialTheme.typography.labelLarge)
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -559,7 +584,7 @@ fun SettingsScreen(
                 }
                 Button(
                     modifier = Modifier.weight(1f),
-                    onClick = { onSave(sheetUrl.trim(), appsScriptUrl.trim(), importanceWeight, topN) }
+                    onClick = { onSave(sheetUrl.trim(), appsScriptUrl.trim(), weightFromPriorityTilt(priorityTilt), topN) }
                 ) {
                     Text("Save Settings")
                 }
