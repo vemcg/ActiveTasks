@@ -11,7 +11,7 @@ val buildInstant = Instant.now()
 val defaultVersionCode = buildInstant.epochSecond.toInt()
 
 // Base app version. Bump manually for meaningful releases.
-val versionBase = providers.gradleProperty("buildVersionBase").orElse("0.1.0").get()
+val versionBase = providers.gradleProperty("buildVersionBase").orElse("0.2.0").get()
 // Unpadded build/run number (e.g. CI run number). Kept numeric so "10" never sorts
 // before "2" the way it would under plain lexical string comparison.
 val buildNumber = providers.gradleProperty("buildNumber").orElse("0").get()

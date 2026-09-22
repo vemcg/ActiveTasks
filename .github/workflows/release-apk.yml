@@ -29,7 +29,7 @@ jobs:
         run: |
           BUILD_TIMESTAMP=$(date -u +%Y%m%d.%H%M%S)
           SHORT_SHA=$(git rev-parse --short=7 "$GITHUB_SHA")
-          VERSION_BASE="0.1.0"
+          VERSION_BASE="0.2.0"
           BUILD_NUMBER="${{ github.run_number }}"
           VERSION_NAME="${VERSION_BASE}-${BUILD_NUMBER}"
           VERSION_CODE=$(date -u +%s)
