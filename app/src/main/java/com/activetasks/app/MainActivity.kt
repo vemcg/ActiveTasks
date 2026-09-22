@@ -30,6 +30,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -296,32 +298,36 @@ fun ActiveTasksApp(
             onCancel = { screen = Screen.SETTINGS }
         )
         Screen.SETTINGS -> SettingsScreen(
-            sheetUrl = sheetUrl,
-            onSheetUrlChange = {
-                sheetUrl = it
-                onSheetUrlSaved(it)
-            },
-            appsScriptUrl = appsScriptUrl,
-            onAppsScriptUrlChange = {
-                appsScriptUrl = it
-                onAppsScriptUrlSaved(it)
-            },
-            importanceWeight = importanceWeight,
-            onImportanceWeightChange = {
-                importanceWeight = it
-                onImportanceWeightSaved(it)
-            },
-            topN = topN,
-            onTopNChange = {
-                topN = it
-                onTopNSaved(it)
-            },
+            initialSheetUrl = sheetUrl,
+            initialAppsScriptUrl = appsScriptUrl,
+            initialImportanceWeight = importanceWeight,
+            initialTopN = topN,
             onScanQr = { screen = Screen.QR_SCANNER },
-            onSync = ::runSync,
+            // Sync always uses (and commits) whatever's currently typed, even if "Save Settings"
+            // hasn't been pressed yet - syncing without a saved URL to sync again next launch
+            // would be a trap, and this matches "Sync Lists" always having saved immediately.
+            onSync = { draftSheetUrl, draftAppsScriptUrl ->
+                sheetUrl = draftSheetUrl
+                onSheetUrlSaved(draftSheetUrl)
+                appsScriptUrl = draftAppsScriptUrl
+                onAppsScriptUrlSaved(draftAppsScriptUrl)
+                runSync()
+            },
             syncing = syncing,
             syncMessage = syncMessage,
             canGoBack = lists.isNotEmpty(),
-            onBack = { screen = Screen.CAROUSEL }
+            onCancel = { screen = Screen.CAROUSEL },
+            onSave = { newSheetUrl, newAppsScriptUrl, newImportanceWeight, newTopN ->
+                sheetUrl = newSheetUrl
+                onSheetUrlSaved(newSheetUrl)
+                appsScriptUrl = newAppsScriptUrl
+                onAppsScriptUrlSaved(newAppsScriptUrl)
+                importanceWeight = newImportanceWeight
+                onImportanceWeightSaved(newImportanceWeight)
+                topN = newTopN
+                onTopNSaved(newTopN)
+                screen = Screen.CAROUSEL
+            }
         )
         Screen.CAROUSEL -> CarouselScreen(
             hasSyncedLists = lists.isNotEmpty(),
@@ -361,25 +367,31 @@ fun ActiveTasksApp(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    sheetUrl: String,
-    onSheetUrlChange: (String) -> Unit,
-    appsScriptUrl: String,
-    onAppsScriptUrlChange: (String) -> Unit,
-    importanceWeight: Float,
-    onImportanceWeightChange: (Float) -> Unit,
-    topN: Int,
-    onTopNChange: (Int) -> Unit,
+    initialSheetUrl: String,
+    initialAppsScriptUrl: String,
+    initialImportanceWeight: Float,
+    initialTopN: Int,
     onScanQr: () -> Unit,
-    onSync: () -> Unit,
+    onSync: (sheetUrl: String, appsScriptUrl: String) -> Unit,
     syncing: Boolean,
     syncMessage: String,
     canGoBack: Boolean,
-    onBack: () -> Unit
+    onCancel: () -> Unit,
+    onSave: (sheetUrl: String, appsScriptUrl: String, importanceWeight: Float, topN: Int) -> Unit
 ) {
-    // Accordion: at most one section open at a time. "" means all collapsed. Same pattern, and
-    // the same "Google Sheet Connection" section title/wording, as MicroTasking's SettingsScreen -
-    // keep the two in sync stylistically.
-    var openSection by remember { mutableStateOf("Google Sheet Connection") }
+    // Draft state: nothing here reaches the caller until Save Settings is pressed (Cancel just
+    // discards it), except Sync Lists, which always commits the two URL fields it uses - see the
+    // call site's onSync. Scanning a QR code bypasses this screen's draft entirely (it saves
+    // immediately and this screen remounts with the new values as its initial state).
+    var sheetUrl by remember { mutableStateOf(initialSheetUrl) }
+    var appsScriptUrl by remember { mutableStateOf(initialAppsScriptUrl) }
+    var importanceWeight by remember { mutableStateOf(initialImportanceWeight) }
+    var topN by remember { mutableStateOf(initialTopN) }
+    // Accordion: at most one section open at a time. "" means all collapsed. Same pattern as
+    // MicroTasking's SettingsScreen - keep the two in sync stylistically. Google Sheet Connection
+    // only opens by default for a not-yet-connected setup; once connected, it's not the section
+    // people usually want, so nothing pre-opens.
+    var openSection by remember { mutableStateOf(if (initialSheetUrl.isBlank()) "Google Sheet Connection" else "") }
 
     @Composable
     fun sectionHeader(title: String) {
@@ -399,12 +411,12 @@ fun SettingsScreen(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = Modifier.fillMaxSize().imePadding()) {
         TopAppBar(
-            title = {},
+            title = { Text("Settings") },
             navigationIcon = {
                 if (canGoBack) {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onCancel) {
                         Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
@@ -414,77 +426,7 @@ fun SettingsScreen(
             modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            item {
-                Text(
-                    "Settings",
-                    modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
-                    style = MaterialTheme.typography.headlineMedium
-                )
-            }
-
-            item {
-                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        sectionHeader("Google Sheet Connection")
-                        if (openSection == "Google Sheet Connection") {
-                            Text(
-                                "Your tasks live in a Google Sheet you own. Paste its URL, or scan the Sheet " +
-                                    "QR code from the onboarding page, so the app can read it - each tab " +
-                                    "becomes a list.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            OutlinedTextField(
-                                value = sheetUrl,
-                                onValueChange = onSheetUrlChange,
-                                modifier = Modifier.fillMaxWidth(),
-                                label = { Text("Google Sheet URL") }
-                            )
-                            OutlinedButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth()) {
-                                Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
-                                Text(" Scan Sheet QR Code")
-                            }
-
-                            Text(
-                                "The Web App is a small script inside your Sheet that lets the app write back " +
-                                    "to it - completing and re-prioritizing items. Deploy it once from your " +
-                                    "Sheet (Extensions > Apps Script > Deploy > New deployment > Web app), " +
-                                    "then paste its URL or scan its QR code from the onboarding page.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            OutlinedTextField(
-                                value = appsScriptUrl,
-                                onValueChange = onAppsScriptUrlChange,
-                                modifier = Modifier.fillMaxWidth(),
-                                label = { Text("Apps Script Web App URL") },
-                                placeholder = { Text("https://script.google.com/macros/s/…/exec") }
-                            )
-                            // Both scan buttons open the same scanner; the result is routed by what the
-                            // scanned text looks like (parseSetupQr), never by which button was pressed.
-                            OutlinedButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth()) {
-                                Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
-                                Text(" Scan Web App QR Code")
-                            }
-
-                            Button(
-                                onClick = onSync,
-                                enabled = sheetUrl.isNotBlank() && !syncing,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(if (syncing) "Syncing…" else "Sync Lists")
-                            }
-                            if (syncMessage.isNotBlank()) {
-                                Text(
-                                    syncMessage,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+            item { Spacer(modifier = Modifier.height(8.dp)) }
 
             item {
                 OutlinedCard(modifier = Modifier.fillMaxWidth()) {
@@ -504,15 +446,79 @@ fun SettingsScreen(
                             )
                             Slider(
                                 value = importanceWeight,
-                                onValueChange = onImportanceWeightChange,
+                                onValueChange = { importanceWeight = it },
                                 valueRange = 0.5f..4f,
                                 steps = 6
                             )
                             Text("Items per list: $topN", style = MaterialTheme.typography.labelLarge)
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                OutlinedButton(onClick = { if (topN > 1) onTopNChange(topN - 1) }) { Text("−") }
+                                OutlinedButton(onClick = { if (topN > 1) topN -= 1 }) { Text("−") }
                                 Text("$topN", modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleMedium)
-                                OutlinedButton(onClick = { if (topN < 10) onTopNChange(topN + 1) }) { Text("+") }
+                                OutlinedButton(onClick = { if (topN < 10) topN += 1 }) { Text("+") }
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        sectionHeader("Google Sheet Connection")
+                        if (openSection == "Google Sheet Connection") {
+                            Text(
+                                "Your tasks live in a Google Sheet you own. Paste its URL, or scan the Sheet " +
+                                    "QR code from the onboarding page, so the app can read it - each tab " +
+                                    "becomes a list.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedTextField(
+                                value = sheetUrl,
+                                onValueChange = { sheetUrl = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Google Sheet URL") }
+                            )
+                            OutlinedButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth()) {
+                                Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
+                                Text(" Scan Sheet QR Code")
+                            }
+
+                            Text(
+                                "The Web App is a small script inside your Sheet that lets the app write back " +
+                                    "to it - completing and re-prioritizing items. Deploy it once from your " +
+                                    "Sheet (Extensions > Apps Script > Deploy > New deployment > Web app), " +
+                                    "then paste its URL or scan its QR code from the onboarding page.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedTextField(
+                                value = appsScriptUrl,
+                                onValueChange = { appsScriptUrl = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Apps Script Web App URL") },
+                                placeholder = { Text("https://script.google.com/macros/s/…/exec") }
+                            )
+                            // Both scan buttons open the same scanner; the result is routed by what the
+                            // scanned text looks like (parseSetupQr), never by which button was pressed.
+                            OutlinedButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth()) {
+                                Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
+                                Text(" Scan Web App QR Code")
+                            }
+
+                            Button(
+                                onClick = { onSync(sheetUrl.trim(), appsScriptUrl.trim()) },
+                                enabled = sheetUrl.isNotBlank() && !syncing,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(if (syncing) "Syncing…" else "Sync Lists")
+                            }
+                            if (syncMessage.isNotBlank()) {
+                                Text(
+                                    syncMessage,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
                             }
                         }
                     }
@@ -539,6 +545,25 @@ fun SettingsScreen(
             }
 
             item { Spacer(modifier = Modifier.height(16.dp)) }
+        }
+        Surface(shadowElevation = 4.dp) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .navigationBarsPadding(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(modifier = Modifier.weight(1f), enabled = canGoBack, onClick = onCancel) {
+                    Text("Cancel")
+                }
+                Button(
+                    modifier = Modifier.weight(1f),
+                    onClick = { onSave(sheetUrl.trim(), appsScriptUrl.trim(), importanceWeight, topN) }
+                ) {
+                    Text("Save Settings")
+                }
+            }
         }
     }
 }

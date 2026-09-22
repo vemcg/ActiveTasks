@@ -143,23 +143,33 @@ implements this contract.
 
 ## Screens
 
-1. **Settings** - three collapsible accordion cards (at most one open at a time), same accordion
-   pattern, "Settings" headlineMedium page heading, and section-header styling as MicroTasking's
-   Settings screen (`sectionHeader`), so the two apps' Settings screens read as one design:
-   - **"Google Sheet Connection"** (open by default) - identical in layout and wording to
-     MicroTasking's section of the same name (only "list" vs "task category" and what the Web App
-     is for differ): why-a-Sheet-URL text, *Google Sheet URL* box, **Scan Sheet QR Code**,
-     why-a-Web-App text, *Apps Script Web App URL* box (to become the **connection code**: Web App
-     URL plus secret key, shown masked and never logged in full), **Scan Web App QR Code**, then
-     the one action button, **Sync Lists** (disabled while syncing or with a blank Sheet URL), and
-     its status message. Both scan buttons open the same scanner and route the result by content
-     (`parseSetupQr`), never by which button was pressed. A bare Sheet URL is no longer enough:
-     ActiveTasks can't work without priorities, so it needs the connection code.
+1. **Settings** - app bar title is "Settings" (with a back icon once `canGoBack`, i.e. once at
+   least one Sheet sync has ever completed). Below it, three collapsible accordion cards (at most
+   one open at a time), same accordion pattern and section-header styling as MicroTasking's
+   Settings screen (`sectionHeader`), in this order:
    - **"Priority & Lists"** - importance-weight slider (`0.5`-`4.0`, default `2.0`) and
      items-per-list count (`1`-`10`, default `5`, a single global setting).
+   - **"Google Sheet Connection"** - open by default only when the Sheet URL isn't set yet (a
+     not-yet-connected setup); once connected, nothing pre-opens, since it's no longer the section
+     most visits need. Identical in layout and wording to MicroTasking's section of the same name
+     (only "list" vs "task category" and what the Web App is for differ): why-a-Sheet-URL text,
+     *Google Sheet URL* box, **Scan Sheet QR Code**, why-a-Web-App text, *Apps Script Web App URL*
+     box (to become the **connection code**: Web App URL plus secret key, shown masked and never
+     logged in full), **Scan Web App QR Code**, then the one action button, **Sync Lists**
+     (disabled while syncing or with a blank Sheet URL), and its status message. Both scan buttons
+     open the same scanner and route the result by content (`parseSetupQr`), never by which button
+     was pressed. A bare Sheet URL is no longer enough: ActiveTasks can't work without priorities,
+     so it needs the connection code.
    - **"About"** - version (`BuildConfig.VERSION_BASE`-`BUILD_NUMBER`) and build metadata
      (timestamp, git short SHA, git branch), same content and layout as MicroTasking's "About"
      section.
+
+   Every field is a local draft: nothing reaches persisted settings until **Save Settings**
+   (bottom action bar, alongside **Cancel** - disabled until `canGoBack`, same gate as the back
+   icon), except **Sync Lists**, which always commits the two URL fields it just used (syncing
+   without saving the URL that produced the result would silently stop working the next time the
+   app opens) and **Scan Sheet/Web App QR Code**, which save immediately as before (scanning exits
+   to a separate screen; this screen remounts with the new values as its starting draft on return).
 2. **Carousel** (home screen, and the *only* list screen - there is no overview of lists with
    counts, and no separate "see everything" list-detail view) - the app bar title is always
    "ActiveTasks" (MicroTasking-style, a fixed app-name title rather than changing per page); the
