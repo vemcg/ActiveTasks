@@ -64,8 +64,11 @@ turns those into a ranking is entirely ActiveTasks's concern, adjustable in Sett
 `1.0` at center - see "Screens"). The formula and the number are never shown to the user; the
 slider only ever shows which of "Importance"/"Urgency" currently counts for more, by font size.
 
-`Quadrant`/`quadrant()` still exist as a coarse 0.5-threshold bucketing of the continuous values,
-used only for badge label/color - the real ranking always uses the continuous score above.
+`Quadrant`/`quadrant()` still exist as a coarse 0.5-threshold bucketing of the continuous values -
+the real ranking always uses the continuous score above. Not shown as a badge on an item's card
+(removed 2026-09-22: the "Do First" text and its orange color, read by more than one user as the
+item's status, were just this label/color, and told the user nothing progress didn't already);
+`quadrantColor` still tints `MatrixWidget`'s four reference-quadrant backgrounds.
 
 ActiveTasks keeps its **own** matrix widget too (same continuous behavior, not the old 4-quadrant tap),
 used for **re-triaging** an item after it arrives (open "Priority & progress", drag the marker).
@@ -197,11 +200,12 @@ implements this contract.
      score (earlier list wins ties; with nothing referred anywhere, the first list). Only a page
      the user swiped to is recorded as "last opened" - the page it merely opened on is not, so the
      highest-priority fallback keeps applying until they navigate.
-   - **Each item is a card**, MicroTasking-style: the task text, its quadrant badge and progress,
-     then the actions underneath as buttons - **Complete (for now)**, **Fully complete**,
-     **Priority & progress** (opens the dialog below), and **Open link** when the row has one.
-     No checkbox and no trash/delete icon. A failed Sheet write leaves the item in place and shows
-     the error above the list.
+   - **Each item is a card**, MicroTasking-style: the task text, then "Progress N%" (no quadrant
+     badge - see "Priority model" above), then two rows of buttons, not a text-link row: **Complete
+     (for now)** above **Open link** (when the row has one) on the left, **Priority & progress**
+     (opens the dialog below) directly above **Fully complete** on the right. No checkbox and no
+     trash/delete icon. A failed Sheet write leaves the item in place and shows the error above the
+     list.
 3. **Priority & progress** (dialog, from an item's card) - the continuous matrix widget
    (re-triage in place, written through to the Sheet) and a progress slider (local-only).
 4. **Add item** (dialog, from an **Add item** button on the carousel) - pick one of the existing

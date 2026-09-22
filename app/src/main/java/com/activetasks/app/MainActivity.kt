@@ -59,7 +59,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -740,34 +739,36 @@ fun ToDoItemRow(
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text(item.description, style = MaterialTheme.typography.bodyLarge)
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
-                val quadrant = item.quadrant()
-                Text(
-                    quadrant.label,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = quadrantColor(quadrant, MaterialTheme.colorScheme),
-                    modifier = Modifier.padding(end = 12.dp)
-                )
-                Text(
-                    "${item.progress}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            Text(
+                "Progress ${item.progress}%",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            // Left column: Complete (for now) above, Open link below (if any). Right column:
+            // Priority & progress directly above Fully complete - both real buttons, not the
+            // text-link row this used to be.
             Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onCompleteForNow, enabled = !busy, modifier = Modifier.weight(1f)) {
                     Text("Complete (for now)")
                 }
-                Button(onClick = onFullyComplete, enabled = !busy, modifier = Modifier.weight(1f)) {
-                    Text("Fully complete")
+                OutlinedButton(onClick = onAdjust, enabled = !busy, modifier = Modifier.weight(1f)) {
+                    Text("Priority & progress")
                 }
             }
-            Row(modifier = Modifier.fillMaxWidth()) {
-                TextButton(onClick = onAdjust, enabled = !busy) { Text("Priority & progress") }
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (item.link.isNotBlank()) {
-                    TextButton(onClick = {
-                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.link))) }
-                    }) { Text("Open link") }
+                    OutlinedButton(
+                        onClick = {
+                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.link))) }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Open link") }
+                } else {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+                Button(onClick = onFullyComplete, enabled = !busy, modifier = Modifier.weight(1f)) {
+                    Text("Fully complete")
                 }
             }
         }
