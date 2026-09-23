@@ -142,17 +142,16 @@ private val REDIRECT_CODES = setOf(
 )
 
 /**
- * `{webAppUrl}` (script.google.com/macros/s/.../exec) always 302-redirects to a one-time
- * script.googleusercontent.com URL that actually serves the response - true for every method, GET
- * or POST alike. That's transparent for [fetchAllPriorities]'s GET (nothing to lose), but
- * `HttpURLConnection`'s default auto-follow re-issues the *next* request as a GET on a
- * 301/302/303, silently dropping a POST's body - every write-back call was landing on Apps
- * Script's `doGet` with no `action` parameter at all (`{"ok":false,"error":"Unknown or missing
- * action"}`, itself not matching [ROW_NOT_FOUND_MARKERS], so it surfaced as a generic
- * "couldn't reach the Sheet" failure instead of ever reaching `doPost`). Auto-follow is disabled
- * here and the POST is replayed manually against the redirect target instead, so the body survives.
+ * `{webAppUrl}` (script.google.com/macros/s/.../exec) 302-redirects to a one-time
+ * script.googleusercontent.com URL. Confirmed on-device (2026-09-23, HTTP 405 from that URL) that
+ * this redirect target only ever accepts GET: Apps Script executes `doPost` against the *initial*
+ * POST request itself (its body already reached the script before the redirect happens) and the
+ * redirect is purely to hand back the already-computed JSON result from a plain content host -
+ * replaying it as a second POST (an earlier version of this function did exactly that, to work
+ * around a since-disproven theory that the body was being lost) gets a 405, not `doPost`'s
+ * response. So: send the POST once, and if redirected, fetch the result with a GET.
  */
-private fun postJson(urlString: String, bodyBytes: ByteArray, redirectsLeft: Int = MAX_REDIRECTS): Pair<Int, String> {
+private fun postJson(urlString: String, bodyBytes: ByteArray): Pair<Int, String> {
     val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
         requestMethod = "POST"
         doOutput = true
@@ -163,10 +162,30 @@ private fun postJson(urlString: String, bodyBytes: ByteArray, redirectsLeft: Int
     }
     connection.outputStream.use { it.write(bodyBytes) }
     val responseCode = connection.responseCode
-    val location = connection.getHeaderField("Location")
-    if (responseCode in REDIRECT_CODES && redirectsLeft > 0 && location != null) {
+    if (responseCode in REDIRECT_CODES) {
+        val location = connection.getHeaderField("Location")
         connection.disconnect()
-        return postJson(location, bodyBytes, redirectsLeft - 1)
+        if (location != null) return httpGet(location)
+    }
+    val responseBody = (if (responseCode in 200..299) connection.inputStream else connection.errorStream)
+        ?.bufferedReader()?.readText().orEmpty()
+    connection.disconnect()
+    return responseCode to responseBody
+}
+
+/** Follows a GET redirect chain manually rather than trusting a given JDK/Android version's default auto-follow behavior for a cross-host https redirect. */
+private fun httpGet(urlString: String, redirectsLeft: Int = MAX_REDIRECTS): Pair<Int, String> {
+    val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
+        requestMethod = "GET"
+        instanceFollowRedirects = false
+        connectTimeout = CONNECT_TIMEOUT_MS
+        readTimeout = READ_TIMEOUT_MS
+    }
+    val responseCode = connection.responseCode
+    if (responseCode in REDIRECT_CODES && redirectsLeft > 0) {
+        val location = connection.getHeaderField("Location")
+        connection.disconnect()
+        if (location != null) return httpGet(location, redirectsLeft - 1)
     }
     val responseBody = (if (responseCode in 200..299) connection.inputStream else connection.errorStream)
         ?.bufferedReader()?.readText().orEmpty()
