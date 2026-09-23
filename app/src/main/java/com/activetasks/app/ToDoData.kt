@@ -191,13 +191,36 @@ fun toDoItemsFromReferredRows(
  */
 fun mergeImportedToDoItems(imported: List<ToDoItem>, existing: List<ToDoItem>): List<ToDoItem> {
     val existingIds = existing.mapTo(mutableSetOf()) { it.id }
-    // distinctBy guards against two sheet rows colliding on the same id within one sync batch -
-    // e.g. identical description text in the same tab when neither row has a Task ID yet
-    // (SPEC.md "Harden against user edits"). LazyColumn hard-crashes on a duplicate key, so this
-    // is cheap insurance against that crash, not just tidiness; it can't tell the two rows apart,
-    // so one is silently dropped until the sheet gets surrogate ids for both.
-    val newItems = imported.filter { it.id !in existingIds }.distinctBy { it.id }
-    return existing + newItems
+
+    // An item stored before its Sheet row had a Task ID (or synced against a script that predates
+    // the column) keeps its legacy `sheet-$list-$description` id forever under a plain "add by id"
+    // rule: once that row gains a Task ID, `imported` carries the very same task fresh under a new
+    // `sheet-$taskId` id, and the old rule would show two cards for one real task starting at 0%
+    // progress - not a hypothetical, this is exactly what the taskId rollout itself triggered for
+    // every already-referred item on a device that synced before and after the Sheet's Task ID
+    // column was populated. Fold any no-taskId existing item into its now-taskId-bearing
+    // counterpart in place (progress/done carried over) instead of letting it duplicate.
+    val importedByListDescription = imported.filter { it.taskId != null }.associateBy { it.list to it.description }
+    val migratedIds = mutableSetOf<String>()
+    val migrated = existing.map { existingItem ->
+        if (existingItem.taskId != null) return@map existingItem
+        val match = importedByListDescription[existingItem.list to existingItem.description] ?: return@map existingItem
+        migratedIds += match.id
+        existingItem.copy(id = match.id, taskId = match.taskId, importance = match.importance, urgency = match.urgency)
+    }
+
+    // distinctBy (keeping the first/earlier-added copy) also self-heals a device already affected
+    // by the bug above: the migrated legacy item (real progress) ends up sharing an id with a
+    // taskId-based duplicate a prior sync already added (still at 0%) - the legacy one was added
+    // earlier so it sorts first, and its progress wins.
+    //
+    // Separately, distinctBy guards against two sheet rows colliding on the same id within one
+    // sync batch - e.g. identical description text in the same tab when neither row has a Task ID
+    // yet (SPEC.md "Harden against user edits"). LazyColumn hard-crashes on a duplicate key, so
+    // this is cheap insurance against that crash too, not just tidiness; it can't tell the two rows
+    // apart, so one is silently dropped until the sheet gets surrogate ids for both.
+    val newItems = imported.filter { it.id !in existingIds && it.id !in migratedIds }.distinctBy { it.id }
+    return (migrated + newItems).distinctBy { it.id }
 }
 
 /**

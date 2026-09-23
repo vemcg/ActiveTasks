@@ -127,6 +127,51 @@ class ToDoDataTest {
     }
 
     @Test
+    fun mergeImportedToDoItems_migratesALegacyItemOntoItsNewTaskIdBasedId_whenItsRowGainsATaskId() {
+        // Simulates the exact bug hit in practice: an item synced before the Sheet's Task ID
+        // column was populated is stored under the legacy sheet-$list-$description id; the next
+        // sync now reads the same row fresh with a Task ID, under a new sheet-$taskId id. Without
+        // migration this reads as two different tasks.
+        val legacy = ToDoItem(
+            id = "sheet-Errands-Buy milk", description = "Buy milk", list = "Errands",
+            importance = 0.5f, urgency = 0.5f, progress = 40
+        )
+        val freshlyImported = ToDoItem(
+            id = "sheet-abc-123", description = "Buy milk", list = "Errands", taskId = "abc-123",
+            importance = 0.7f, urgency = 0.3f
+        )
+        val merged = mergeImportedToDoItems(listOf(freshlyImported), listOf(legacy))
+        assertEquals(1, merged.size)
+        val item = merged.single()
+        assertEquals("sheet-abc-123", item.id)
+        assertEquals("abc-123", item.taskId)
+        // The new priority values from the sheet win, but local progress carries over untouched.
+        assertEquals(0.7f, item.importance)
+        assertEquals(40, item.progress)
+    }
+
+    @Test
+    fun mergeImportedToDoItems_resolvesADeviceAlreadyDuplicatedByTheTaskIdRollout() {
+        // A device that already synced once under the bug above now has both the legacy item
+        // (real progress) and the taskId-based duplicate a prior sync already added (0% progress,
+        // since a freshly-imported item never carries local progress). The next sync should
+        // collapse them back to one card with the real progress, with no user action needed.
+        val legacy = ToDoItem(
+            id = "sheet-Errands-Buy milk", description = "Buy milk", list = "Errands",
+            importance = 0.5f, urgency = 0.5f, progress = 40
+        )
+        val alreadyDuplicated = ToDoItem(
+            id = "sheet-abc-123", description = "Buy milk", list = "Errands", taskId = "abc-123",
+            importance = 0.7f, urgency = 0.3f, progress = 0
+        )
+        val freshlyImported = alreadyDuplicated.copy(importance = 0.8f)
+        val merged = mergeImportedToDoItems(listOf(freshlyImported), listOf(legacy, alreadyDuplicated))
+        assertEquals(1, merged.size)
+        assertEquals(40, merged.single().progress)
+        assertEquals("sheet-abc-123", merged.single().id)
+    }
+
+    @Test
     fun mergeImportedToDoItems_dedupesCollidingIdsWithinOneImportBatch() {
         // Two sheet rows with identical description text and no Task ID collide on the same id -
         // distinctBy keeps the crash-prone duplicate out of the merged list (SPEC.md "Harden
