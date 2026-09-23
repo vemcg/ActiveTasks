@@ -127,6 +127,63 @@ class ToDoDataTest {
     }
 
     @Test
+    fun mergeImportedToDoItems_dedupesCollidingIdsWithinOneImportBatch() {
+        // Two sheet rows with identical description text and no Task ID collide on the same id -
+        // distinctBy keeps the crash-prone duplicate out of the merged list (SPEC.md "Harden
+        // against user edits": "Related risk... two rows in the same tab with identical description").
+        val imported = listOf(
+            ToDoItem(id = "sheet-List-Dup", description = "Dup", list = "List", importance = 0.1f),
+            ToDoItem(id = "sheet-List-Dup", description = "Dup", list = "List", importance = 0.9f)
+        )
+        val merged = mergeImportedToDoItems(imported, emptyList())
+        assertEquals(1, merged.size)
+    }
+
+    @Test
+    fun itemsToLoad_dedupesCollidingIdsFromStorage() {
+        val stored = listOf(
+            ToDoItem(id = "sheet-List-Dup", description = "Dup", list = "List", importance = 0.1f),
+            ToDoItem(id = "sheet-List-Dup", description = "Dup", list = "List", importance = 0.9f)
+        )
+        assertEquals(1, itemsToLoad(ITEMS_SCHEMA_VERSION, stored).size)
+    }
+
+    @Test
+    fun computeVisibleLists_keepsAnOrphanedListVisible_whenItsTabIsRenamedOrRemoved() {
+        // "List" carried a live item in from an earlier sync, but the current sync's known_lists
+        // (wholesale-replaced, not merged) no longer includes it - e.g. the tab was renamed in the
+        // Sheet. The item must still be reachable from somewhere in the carousel rather than
+        // silently disappearing (SPEC.md "Harden against user edits": "Silent disappearance").
+        val knownLists = listOf("Renamed List")
+        val items = listOf(ToDoItem(id = "sheet-1", description = "Orphaned", list = "List", importance = 0.5f))
+        assertEquals(listOf("List"), computeVisibleLists(knownLists, items))
+    }
+
+    @Test
+    fun computeVisibleLists_matchesPlainFilterBehavior_whenNothingIsOrphaned() {
+        val knownLists = listOf("Cleaning", "Errands")
+        val items = listOf(
+            ToDoItem(id = "a", description = "", list = "Cleaning", importance = 0.5f),
+            ToDoItem(id = "b", description = "", list = "Errands", importance = 0.5f, done = true)
+        )
+        // "Errands" has an item, but it's done, so it still gets no page - same as before this
+        // function existed.
+        assertEquals(listOf("Cleaning"), computeVisibleLists(knownLists, items))
+    }
+
+    @Test
+    fun parseToDoCsvRows_handlesAQuotedCellSpanningMultipleLines() {
+        // The gviz CSV export quotes a cell containing a literal newline rather than escaping it -
+        // splitting on line breaks before tracking quote state would tear this row apart and read
+        // the second physical line as a bogus extra row (SPEC.md "Harden against user edits").
+        val csv = "checked,description,link\nTRUE,\"Line one\nline two\",\nTRUE,Second task,\n"
+        val rows = parseToDoCsvRows(csv)
+        assertEquals(2, rows.size)
+        assertEquals("Line one\nline two", rows.first().description)
+        assertEquals("Second task", rows[1].description)
+    }
+
+    @Test
     fun itemsToLoad_dropsEverythingStoredUnderAnOlderSchema() {
         // The pre-referral scaffold stored every checked row (same "sheet-" id format), which
         // can't be told apart from genuinely referred ones - so the whole old set goes.

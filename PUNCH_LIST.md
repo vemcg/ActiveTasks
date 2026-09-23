@@ -51,39 +51,76 @@
      priority; item appears immediately under its `external-…` id) and **re-triage write-through**
      (`setPriority`; local copy updates even if the write fails).
    - Update `CLAUDE.md` (it still describes the gviz/xlsx read path) once the sync moves over.
-4. **Harden against user edits to the shared Sheet** — *not started, scoped 2026-09-22 at the
-   user's request: "make it very hard for user input to break either app," specifically "if I
-   rename a description ActiveTasks needs to handle that gracefully."* Today both apps identify a
-   Sheet row by `(tab name, description text)` (`SPEC.md` "Referral bridge" > "Row identity"), and
-   ActiveTasks's own item id is `sheet-$listName-${row.description}` (`ToDoData.kt`). Confirmed by
-   reading `TaskPool.mergeImportedManagedTasks`: MicroTasking's own pool already handles a
-   description rename cleanly (rebuilt from the current import each sync, so the old id is simply
-   dropped) - the problem below is specific to ActiveTasks.
-   - **Orphaned duplicate.** `mergeImportedToDoItems` only ever *adds* items by id (deliberately -
-     see `SPEC.md` "Merge-on-resync policy": ActiveTasks's sheet is a source of new items, never a
-     mirror to sync down to). A rename produces a new id, so the next sync adds a second card for
-     what the user considers the same task, and the old card is now permanently stuck - its
-     Complete-for-now/Fully-complete calls still target the *old* description, which no longer
-     resolves to any row, so the write fails and the item can never be dismissed from the app.
-   - **Silent disappearance, if the whole tab (list) is renamed rather than just one row's
-     description.** `known_lists` is replaced wholesale by the current tab names on every sync
-     (not merged), so once the old tab name drops out of it, the carousel's "no page for a list
-     with nothing referred" behavior (`visibleLists`, `CarouselScreen`, added 2026-09-22) means the
-     orphaned item's old list can never appear again - the item still exists in the `todo_items`
-     pref, but there's no way to reach it anywhere in the UI.
-   - **Related risk, not yet hit but structurally possible:** two rows in the *same* tab with
-     identical description text collide on the same item id. `CarouselScreen`'s `LazyColumn` keys
-     items by `it.id` with no de-dup guard - the same bug class MicroTasking already hit and fixed
-     (`DEFECTS.md` items 2-3 there: a duplicate key hard-crashes `LazyColumn`).
-   - **Real fix belongs with the Sheet-connection API redesign** (item 3 above / MicroTasking's
-     `PUNCH_LIST.md` item 9): a server-assigned, stable row id instead of raw description text
-     would remove the root cause on both sides. Until then, minimum mitigation for this repo:
-     de-dup by id before rendering (cheap insurance against the crash case), and a way to detect
-     and let the user clear an item whose Sheet row no longer resolves - a failed
-     Complete-for-now/Fully-complete already surfaces an error; extend it to offer "remove
-     locally" once the row is confirmed gone, instead of leaving the item stuck forever.
-   - **Broader ask, same request:** audit other user-editable-Sheet-input paths for the same
-     "quietly wrong forever" failure mode, not just description rename - e.g. blank/whitespace-only
-     descriptions, extremely long text, a description that itself looks like a formula (`=...`),
-     and the already-known gap that a Sheet cell spanning multiple lines breaks CSV parsing (noted
-     in MicroTasking's `PUNCH_LIST.md` item 1 follow-ups).
+4. **Harden against user edits to the shared Sheet** — *scoped 2026-09-22 at the user's request:
+   "make it very hard for user input to break either app," specifically "if I rename a description
+   ActiveTasks needs to handle that gracefully."* Mitigated 2026-09-22 (this session) on top of the
+   surrogate-`taskId` groundwork (`6113146`, same day). Today both apps identify a Sheet row by
+   `(tab name, description text)` unless a `taskId` is present (`SPEC.md` "Referral bridge" > "Row
+   identity"; MicroTasking's `doPost` prefers `taskId` when sent). Confirmed by reading
+   `TaskPool.mergeImportedManagedTasks`: MicroTasking's own pool already handles a description
+   rename cleanly (rebuilt from the current import each sync) - the problems below were specific to
+   ActiveTasks's *own* item store, which (deliberately) never rebuilds from scratch.
+   - **Orphaned duplicate** (a description rename produces a new id, stranding the old card) - now
+     mostly prevented for any row carrying a `taskId`: `toDoItemsFromReferredRows` builds the id
+     from `taskId` when present, which a description rename doesn't change (`6113146`). Still
+     possible for a row from a sheet/script predating `taskId` (falls back to the old
+     `sheet-$listName-$description` id) - covered by the "orphaned item" mitigation below instead
+     of being prevented outright.
+   - **Silent disappearance**, if the whole tab (list) is renamed rather than just one row's
+     description - `known_lists` is still replaced wholesale on every sync (not merged), so the old
+     tab name still drops out of it. **Fixed**: `computeVisibleLists` (`ToDoData.kt`) now unions
+     `known_lists` with every live item's own `list` value, so an item survives its tab
+     disappearing from `known_lists` and stays reachable in the carousel - the item still shows
+     under its *original* (possibly now-stale) list name, since `mergeImportedToDoItems` never
+     rewrites an existing item's fields; only removing/re-adding it would pick up a new tab name,
+     which is out of scope here (see "still open" below).
+   - **Duplicate id within the same tab** (two rows with identical description text, no `taskId`
+     yet) - `CarouselScreen`'s `LazyColumn` keys items by `it.id` with no de-dup guard, the same bug
+     class MicroTasking already hit and fixed (`DEFECTS.md` items 2-3 there: a duplicate key
+     hard-crashes `LazyColumn`). **Mitigated**: `mergeImportedToDoItems` and `itemsToLoad` now
+     `distinctBy { it.id }` (crash prevention only - since the two rows are indistinguishable
+     without a `taskId`, one is silently dropped; the real fix is `taskId` reaching every row), plus
+     a defensive `distinctBy` right before the `LazyColumn` itself in `CarouselScreen` as the "de-dup
+     right before rendering" belt-and-suspenders the plan called for.
+   - **"Remove locally" for an item whose Sheet row no longer resolves.** **Done**: `SheetApiClient`
+     now returns a `SheetWriteOutcome` (`Success`/`RowNotFound`/`Failure`) instead of a bare
+     `Boolean`, classifying MicroTasking's `doPost` error text ("No tab named …", "No row matching
+     that description", "No row with that task id") as `RowNotFound` - a confirmed-gone row, not a
+     network hiccup. `completeForNow`/`fullyComplete` (`MainActivity.kt`) flag the item as orphaned
+     on `RowNotFound` instead of leaving a generic "try again" error forever; its card swaps
+     Complete-for-now/Fully-complete for a "Remove locally" button (local-only, no further write).
+     **Tech debt this leaves**: the `RowNotFound` classification is v1-contract string-sniffing
+     (`ROW_NOT_FOUND_MARKERS` in `SheetApiClient.kt`), not a real error code - once item 3's
+     redesign ships MicroTasking's proposed structured `no_such_*` codes, swap this for a code check
+     (the doc comment on `ROW_NOT_FOUND_MARKERS` flags this same thing).
+   - **Broader audit, same request**, of other user-editable-Sheet-input paths for the same
+     "quietly wrong forever" failure mode:
+     - Blank/whitespace-only descriptions: already excluded (`parseToDoCsvRows` trims before
+       checking emptiness) - no gap found.
+     - Extremely long description text: not a robustness issue - Compose's `Text` wraps normally,
+       nothing crashes or truncates unsafely. Left as-is.
+     - A description that looks like a formula (`=...`): not an exploit vector for this app - the
+       CSV export already returns computed values (not formula source), and ActiveTasks never
+       re-exports/re-opens a description as a formula anywhere. Left as-is.
+     - **Fixed**: a Sheet cell spanning multiple physical lines (quoted by the gviz CSV export
+       rather than escaped) used to break parsing, since rows were split on line breaks *before*
+       quote-state was tracked - one bad multi-line cell silently turned into two-plus bogus rows.
+       `SheetImport.kt` gained `splitCsvRecords`, a record-level (quote-aware) splitter;
+       `parseToDoCsvRows` uses it instead of a plain line split. (MicroTasking's own gviz-based
+       import has the same underlying gap, noted in its `PUNCH_LIST.md` item 1 follow-ups - not
+       fixed there by this change, since that's a separate parser in a separate repo.)
+   - **Still open / dangling tech debt** (flagged for the user, not silently deferred):
+     - A `taskId`-bearing item's `list` field goes cosmetically stale after its tab is renamed - it
+       keeps writing through correctly (`taskId` lookup ignores category) and stays visible (via
+       `computeVisibleLists`'s union above), but the carousel page/header still shows the *old* tab
+       name until the item is completed and the row re-referred fresh. Full fix would mean letting a
+       resync update `list` on an existing item, which cuts against the "sheet is a source of new
+       items, never a mirror to sync down to" merge policy (`SPEC.md` "Merge-on-resync policy") -
+       not changed here without that policy conversation.
+     - The duplicate-description collision (no `taskId`) is mitigated against the *crash*, not the
+       *data loss* - one of the two same-named tasks is still silently dropped on import. Real fix
+       is `taskId` reaching every row (item 3 / MicroTasking's item 9's territory), same as noted
+       above.
+     - `RowNotFound` detection depends on matching the *current* v1 script's exact English error
+       wording (see tech debt note above) - it fails safe (falls back to generic retryable
+       `Failure`) but should move to structured error codes once item 3 lands.

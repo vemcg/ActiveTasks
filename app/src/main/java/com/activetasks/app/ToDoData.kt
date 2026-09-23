@@ -119,11 +119,12 @@ data class SheetRow(val description: String, val link: String, val checked: Bool
 fun parseToDoCsvRows(csvText: String): List<SheetRow> {
     if (csvText.isBlank()) return emptyList()
 
-    val rows = csvText.lineSequence()
-        .map { it.trim() }
+    // splitCsvRecords (not a plain line split) so a quoted cell containing a literal newline -
+    // e.g. a multi-line description - stays one record instead of being torn into bogus extra
+    // rows (SPEC.md/PUNCH_LIST.md "Harden against user edits").
+    val rows = splitCsvRecords(csvText)
         .filter { it.isNotBlank() }
         .map { splitCsvLine(it) }
-        .toList()
     if (rows.isEmpty()) return emptyList()
 
     val header = rows.first().map { it.lowercase() }
@@ -190,7 +191,13 @@ fun toDoItemsFromReferredRows(
  */
 fun mergeImportedToDoItems(imported: List<ToDoItem>, existing: List<ToDoItem>): List<ToDoItem> {
     val existingIds = existing.mapTo(mutableSetOf()) { it.id }
-    return existing + imported.filter { it.id !in existingIds }
+    // distinctBy guards against two sheet rows colliding on the same id within one sync batch -
+    // e.g. identical description text in the same tab when neither row has a Task ID yet
+    // (SPEC.md "Harden against user edits"). LazyColumn hard-crashes on a duplicate key, so this
+    // is cheap insurance against that crash, not just tidiness; it can't tell the two rows apart,
+    // so one is silently dropped until the sheet gets surrogate ids for both.
+    val newItems = imported.filter { it.id !in existingIds }.distinctBy { it.id }
+    return existing + newItems
 }
 
 /**
@@ -208,7 +215,10 @@ const val ITEMS_SCHEMA_VERSION = 2
  */
 fun itemsToLoad(storedSchemaVersion: Int, stored: List<ToDoItem>): List<ToDoItem> =
     if (storedSchemaVersion < ITEMS_SCHEMA_VERSION) emptyList()
-    else stored.filter { it.id.startsWith("sheet-") }
+    // distinctBy is defensive: a duplicate id shouldn't be persisted anymore (mergeImportedToDoItems
+    // now dedupes on the way in), but this stops one already saved to a device before that fix from
+    // crashing the carousel's LazyColumn forever.
+    else stored.filter { it.id.startsWith("sheet-") }.distinctBy { it.id }
 
 /**
  * Which list the carousel opens on: the last one the user viewed, else the list whose top open
@@ -228,6 +238,22 @@ fun initialListName(
             .maxOfOrNull { it.priorityScore(importanceWeight) }
             ?: Float.NEGATIVE_INFINITY
     }
+}
+
+/**
+ * Which lists get a carousel page: every list with at least one live (non-done) item, whether or
+ * not it's still among [knownLists] (the current Sheet tabs as of the last sync). A tab renamed or
+ * removed since an item was imported from it drops out of [knownLists] on the very next sync
+ * (`known_lists` is replaced wholesale, not merged) - without this, the item would still exist in
+ * storage but have no page anywhere in the UI to reach it from (SPEC.md/PUNCH_LIST.md "Harden
+ * against user edits": "Silent disappearance"). [knownLists] still matters for empty/never-synced
+ * tabs, which stay hidden here either way - only the union with items' own list names can ever
+ * surface a page, and only for a list that already has something referred to it.
+ */
+fun computeVisibleLists(knownLists: List<String>, items: List<ToDoItem>): List<String> {
+    val liveLists = items.filter { !it.done }.mapTo(mutableSetOf()) { it.list }
+    val orphanedLists = items.filter { !it.done && it.list !in knownLists }.map { it.list }.distinct()
+    return (knownLists + orphanedLists).filter { it in liveLists }
 }
 
 fun readStringList(json: String): List<String> = runCatching {

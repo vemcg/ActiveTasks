@@ -61,8 +61,47 @@ private fun fetchSheetTabCsv(spreadsheetId: String, tabName: String): String = r
 }.getOrDefault("")
 
 /**
- * Splits one CSV line into fields, honoring `"`-quoted fields: a comma inside quotes is literal
- * and `""` is an escaped quote. Doesn't span newlines (callers work line by line).
+ * Splits full CSV text into logical records, each possibly spanning multiple physical lines when a
+ * quoted field embeds a literal newline - the gviz CSV export quotes such a cell rather than
+ * escaping the newline inside it. Splitting on line breaks before tracking quote state (the
+ * previous approach: one [splitCsvLine] call per physical line) truncated any row with a
+ * multi-line cell and misread the rest of that cell's lines as bogus extra rows (SPEC.md/
+ * PUNCH_LIST.md "Harden against user edits").
+ */
+fun splitCsvRecords(csvText: String): List<String> {
+    val records = mutableListOf<String>()
+    val record = StringBuilder()
+    var inQuotes = false
+    var i = 0
+    while (i < csvText.length) {
+        val c = csvText[i]
+        when {
+            c == '"' && inQuotes && i + 1 < csvText.length && csvText[i + 1] == '"' -> {
+                record.append("\"\"")
+                i++
+            }
+            c == '"' -> {
+                inQuotes = !inQuotes
+                record.append(c)
+            }
+            (c == '\n' || c == '\r') && !inQuotes -> {
+                if (c == '\r' && i + 1 < csvText.length && csvText[i + 1] == '\n') i++
+                records.add(record.toString())
+                record.setLength(0)
+            }
+            else -> record.append(c)
+        }
+        i++
+    }
+    if (record.isNotEmpty()) records.add(record.toString())
+    return records
+}
+
+/**
+ * Splits one CSV record into fields, honoring `"`-quoted fields: a comma inside quotes is literal
+ * and `""` is an escaped quote. Only commas/quotes are special here - a record from
+ * [splitCsvRecords] that spans multiple physical lines rides through with its embedded newline(s)
+ * intact as ordinary field content, same as any other character.
  */
 fun splitCsvLine(line: String): List<String> {
     val fields = mutableListOf<String>()

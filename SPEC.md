@@ -37,11 +37,20 @@ and confirmed by the user on both sides (2026-09-18).
   referred.
 - Re-syncing the sheet only **adds** newly-qualifying rows not already present by id. It never
   removes or overwrites an existing item because its sheet row disappeared, its priority got
-  cleared elsewhere, or the description changed underneath it (a changed description is a new id,
-  so it reads as a new item, not an edit to the old one) - **except** the app's own "Complete (for
-  now)" action (see "Referral bridge"), which removes its own item immediately rather than waiting
-  for a resync. Rationale: an item already living in this to-do list may be mid-progress - a
-  spreadsheet edit made somewhere else shouldn't silently delete it.
+  cleared elsewhere, or the description changed underneath it (a changed description is a new id
+  only for a row that predates the `taskId` surrogate key - see "Row identity" below - so it reads
+  as a new item, not an edit to the old one) - **except** the app's own "Complete (for now)"/"Fully
+  complete" actions (see "Referral bridge"), which remove their own item immediately rather than
+  waiting for a resync, and the user's own **"Remove locally"** (see "Screens" > item card), offered
+  once a Complete-for-now/Fully-complete write-back confirms the sheet row itself is gone. Rationale:
+  an item already living in this to-do list may be mid-progress - a spreadsheet edit made somewhere
+  else shouldn't silently delete it, but once the row is *confirmed* gone the user can dismiss it
+  rather than being stuck forever with actions that will only ever fail the same way again. A list
+  a live item's tab was renamed/removed out from under is still reachable in the carousel even
+  though it's dropped out of `known_lists` (see "Screens" > Carousel) - see PUNCH_LIST.md "Harden
+  against user edits to the shared Sheet" for the full mitigation and its known residual gaps
+  (duplicate-description collisions without a `taskId`, and a renamed tab's stale display name on
+  an already-imported item).
 
 ## Priority: Eisenhower matrix
 
@@ -115,6 +124,11 @@ a matrix touch on MicroTasking's side.
    - **Fully complete**: deletes the row entirely via the Web App's delete-row endpoint (same
      shift-up-rows convention MicroTasking's own `onEdit` description-clear already uses) and
      removes ActiveTasks's local copy.
+   - If either write-back call comes back confirming the row itself no longer exists (see
+     `SheetWriteOutcome.RowNotFound`, `SheetApiClient.kt`) rather than a network/server failure, the
+     item is flagged **orphaned** instead of just showing a retry-forever error: its card offers
+     **Remove locally** (local-only, no further Web App call) in place of Complete-for-now/Fully
+     complete. See PUNCH_LIST.md "Harden against user edits to the shared Sheet".
 
 **Bridge mechanism**: a single Apps Script Web App, owned and deployed by MicroTasking's repo
 (extends the already-bound `scripts/populate_google_sheet.js`, `doGet`/`doPost` endpoints). Both
@@ -122,7 +136,13 @@ apps call it over plain HTTPS - no OAuth, no Google Cloud project change, in eit
 
 **Row identity** for every Apps Script call is `(tab name, description text)`, resolved
 server-side by the script - never a cached row index, since MicroTasking's existing row-delete
-logic shifts rows up and would make a cached index unsafe.
+logic shifts rows up and would make a cached index unsafe. A row that carries MicroTasking's
+per-row surrogate `taskId` (`ToDoItem.taskId`, added `6113146`) is looked up by that id instead,
+server-side (`findRowByTaskId_`) - immune to a description rename *and* a tab rename/move, since
+the lookup ignores `category`/`description` entirely once a `taskId` is sent. A row from a
+sheet/script that predates `taskId` still resolves the old way and is still vulnerable to a rename
+producing a "no such row" response - see the `RowNotFound` handling above and PUNCH_LIST.md
+"Harden against user edits to the shared Sheet".
 
 **Superseded 2026-09-19:** the full request/response contract - connection code with a secret key,
 `hello`/`getTasks`/`createRow`/`createTab`/`setPriority`/`clearPriority`/`deleteRow`, error codes,
@@ -165,7 +185,12 @@ implements this contract.
      global setting).
    - **"Google Sheet Connection"** - open by default only when the Sheet URL isn't set yet (a
      not-yet-connected setup); once connected, nothing pre-opens, since it's no longer the section
-     most visits need. Identical in layout and wording to MicroTasking's section of the same name
+     most visits need. Whether it's open persists across a QR scan round trip and across
+     navigating away and back to Settings within the same app session (the accordion state is
+     hoisted above the screen, not local to it) - scanning the Sheet QR code, then the Web App QR
+     code, then pressing Sync Lists all happen without the section auto-collapsing in between; the
+     user closes it manually, or by opening a different section, same as any other accordion
+     interaction. Identical in layout and wording to MicroTasking's section of the same name
      (only "list" vs "task category" and what the Web App is for differ): why-a-Sheet-URL text,
      *Google Sheet URL* box, **Scan Sheet QR Code**, why-a-Web-App text, *Apps Script Web App URL*
      box (to become the **connection code**: Web App URL plus secret key, shown masked and never
@@ -205,7 +230,10 @@ implements this contract.
      progress** button (opens the dialog below), then **Complete (for now)** beside **Fully
      complete** underneath (no quadrant badge - see "Priority model" above). No checkbox and no
      trash/delete icon. A failed Sheet write leaves the item in place and shows the error above the
-     list.
+     list - **except** when the failure is the Web App confirming the row itself is gone (renamed,
+     moved, or deleted out from under the item), in which case the bottom row instead becomes a
+     single **Remove locally** button (local-only, no further Web App call) plus a short explanation
+     - see "Referral bridge" and PUNCH_LIST.md "Harden against user edits to the shared Sheet".
 3. **Priority & progress** (dialog, from an item's card) - the continuous matrix widget
    (re-triage in place, written through to the Sheet) and a progress slider (local-only).
 4. **Add item** (dialog, from an **Add item** button on the carousel) - pick one of the existing
@@ -238,8 +266,10 @@ implements this contract.
 ## Open questions (for later)
 
 - Failure-state UX when a write-back call (complete-for-now, fully-complete, or the referral write
-  itself on MicroTasking's side) fails (offline, Web App misconfigured/undeployed, etc.) - current
-  behavior is "show an error message, leave local state unchanged, let the user retry"; whether
-  that's sufficient or needs queue-and-retry is undecided.
+  itself on MicroTasking's side) fails for a reason *other* than the row being confirmed gone
+  (offline, Web App misconfigured/undeployed, etc.) - current behavior is still "show an error
+  message, leave local state unchanged, let the user retry"; whether that's sufficient or needs
+  queue-and-retry is undecided. (The "row confirmed gone" case itself is now handled - see
+  "Referral bridge" > `RowNotFound`/"Remove locally".)
 - Exact importance-weight default/range and items-per-list default/range above are a first
   proposal, not user-validated in practice.

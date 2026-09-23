@@ -86,7 +86,55 @@ fun fetchAllPriorities(appsScriptUrl: String): List<ReferredRow> = runCatching {
     }
 }.getOrDefault(emptyList())
 
-private fun postAction(appsScriptUrl: String, body: JSONObject): Boolean = runCatching {
+/**
+ * Result of a write-back POST (setPriority/clearPriority/deleteRow). [RowNotFound] means the Web
+ * App itself reported the row doesn't exist anymore (its tab is gone, or its description/taskId no
+ * longer matches any row) - not a network/connectivity problem, so retrying the identical request
+ * will just keep failing the same way; callers use this to offer removing the item locally instead
+ * of leaving it stuck forever. See SPEC.md/PUNCH_LIST.md "Harden against user edits to the shared
+ * Sheet".
+ */
+sealed class SheetWriteOutcome {
+    data object Success : SheetWriteOutcome()
+    data object RowNotFound : SheetWriteOutcome()
+    data class Failure(val message: String?) : SheetWriteOutcome()
+}
+
+/**
+ * The exact wordings MicroTasking's `doPost` (scripts/populate_google_sheet.js) returns when it
+ * can't resolve the target row - an unknown tab, a description that no longer matches any row in
+ * that tab, or a taskId no row carries anymore. Matched by substring (case-insensitive) rather than
+ * equality so a script that appends extra detail still classifies correctly; wording it doesn't
+ * recognize falls back to a generic [SheetWriteOutcome.Failure] - safe, since that keeps the item
+ * retryable instead of misclassifying a real network/server error as "confirmed gone".
+ *
+ * Tech debt: this is v1-contract string-sniffing, not a real error code. MicroTasking's SPEC.md
+ * "Sheet connection & API" (PUNCH_LIST.md item 3 here / its item 9) specifies structured
+ * `no_such_category`/`no_such_row`/`no_such_task_id`-style codes for the same cases - once that
+ * ships and this app moves onto it, replace this list with a code check instead of English text.
+ */
+private val ROW_NOT_FOUND_MARKERS = listOf(
+    "no tab named",
+    "no row matching that description",
+    "no row with that task id"
+)
+
+/**
+ * Pure parse of one write-back HTTP response, split out from [postAction] so it's unit-testable
+ * (plain JUnit, no server) the same way the rest of this codebase's string/JSON parsing is.
+ */
+fun parseWriteOutcome(responseCode: Int, responseBody: String): SheetWriteOutcome {
+    if (responseCode !in 200..299) return SheetWriteOutcome.Failure(null)
+    return runCatching {
+        val json = JSONObject(responseBody)
+        if (json.optBoolean("ok", false)) return SheetWriteOutcome.Success
+        val error = json.optString("error", "")
+        if (ROW_NOT_FOUND_MARKERS.any { error.contains(it, ignoreCase = true) }) SheetWriteOutcome.RowNotFound
+        else SheetWriteOutcome.Failure(error.ifBlank { null })
+    }.getOrDefault(SheetWriteOutcome.Failure(null))
+}
+
+private fun postAction(appsScriptUrl: String, body: JSONObject): SheetWriteOutcome = runCatching {
     val connection = (URL(appsScriptUrl.trimEnd('/')).openConnection() as HttpURLConnection).apply {
         requestMethod = "POST"
         doOutput = true
@@ -99,15 +147,15 @@ private fun postAction(appsScriptUrl: String, body: JSONObject): Boolean = runCa
     val responseBody = (if (responseCode in 200..299) connection.inputStream else connection.errorStream)
         ?.bufferedReader()?.readText().orEmpty()
     connection.disconnect()
-    responseCode in 200..299 && JSONObject(responseBody).optBoolean("ok", false)
-}.getOrDefault(false)
+    parseWriteOutcome(responseCode, responseBody)
+}.getOrDefault(SheetWriteOutcome.Failure(null))
 
 /**
  * "Complete (for now)": clears importance/urgency so MicroTasking can queue the row again.
  * [taskId], when the item has one, is sent alongside category/description so the write is
  * rename-proof even if the sheet's description text has changed since this item was imported.
  */
-fun clearSheetPriority(appsScriptUrl: String, category: String, description: String, taskId: String? = null): Boolean =
+fun clearSheetPriority(appsScriptUrl: String, category: String, description: String, taskId: String? = null): SheetWriteOutcome =
     postAction(
         appsScriptUrl,
         JSONObject().apply {
@@ -122,7 +170,7 @@ fun clearSheetPriority(appsScriptUrl: String, category: String, description: Str
  * "Fully complete": deletes the row outright (checkbox + description + link + hidden columns).
  * [taskId] is sent the same way and for the same reason as in [clearSheetPriority].
  */
-fun deleteSheetRow(appsScriptUrl: String, category: String, description: String, taskId: String? = null): Boolean =
+fun deleteSheetRow(appsScriptUrl: String, category: String, description: String, taskId: String? = null): SheetWriteOutcome =
     postAction(
         appsScriptUrl,
         JSONObject().apply {

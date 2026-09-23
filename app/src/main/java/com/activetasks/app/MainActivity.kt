@@ -154,6 +154,13 @@ fun ActiveTasksApp(
     onLastListSaved: (String) -> Unit
 ) {
     var screen by remember { mutableStateOf(if (initialSheetUrl.isBlank()) Screen.SETTINGS else Screen.CAROUSEL) }
+    // Hoisted above SettingsScreen (rather than a local `remember` there) so it survives the round
+    // trip through the QR scanner screen: SettingsScreen leaves composition entirely while
+    // Screen.QR_SCANNER is showing, and a local `remember` would reset back to its
+    // sheetUrl-is-blank-only default on return, collapsing the section the user just used to scan
+    // one of the two QR codes before they'd gotten to the other one or to Sync Lists. See
+    // SPEC.md/PUNCH_LIST.md "Fix the Google Sheet Connection section auto-collapsing".
+    var openSettingsSection by remember { mutableStateOf(if (initialSheetUrl.isBlank()) "Google Sheet Connection" else "") }
     var sheetUrl by remember { mutableStateOf(initialSheetUrl) }
     var appsScriptUrl by remember { mutableStateOf(initialAppsScriptUrl) }
     var importanceWeight by remember { mutableStateOf(initialImportanceWeight) }
@@ -166,12 +173,22 @@ fun ActiveTasksApp(
     var actionError by remember { mutableStateOf("") }
     var syncing by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    // Ids of items whose last completion write-back came back "row not found" rather than a
+    // network/server failure - the Sheet itself confirmed the row is gone (renamed away, moved to
+    // another tab, or deleted), so retrying the same call would just fail the same way again. Not
+    // persisted: it's just "should this card offer Remove locally right now," recomputed fresh each
+    // time the write is attempted. See completeForNow/fullyComplete and SPEC.md "Harden against
+    // user edits to the shared Sheet".
+    var orphanedItemIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     val coroutineScope = rememberCoroutineScope()
-    // A tab with nothing currently referred to it doesn't get a carousel page at all - only tabs
-    // that actually have a live (non-done) item show up, so swiping only ever lands on lists with
-    // something in them. `lists` itself (every known Sheet tab) still distinguishes "never synced"
-    // from "synced, nothing referred" for the empty-state message below.
-    val visibleLists = lists.filter { listName -> items.any { it.list == listName && !it.done } }
+    // A tab with nothing currently referred to it doesn't get a carousel page at all - only lists
+    // that actually have a live (non-done) item show up, so swiping only ever lands on something.
+    // Uses the union of known Sheet tabs and items' own list names (not just `lists`) so a tab
+    // rename/removal since an item was imported doesn't strand that item with no page anywhere in
+    // the UI to reach it from - see computeVisibleLists. `lists` itself (every known Sheet tab)
+    // still distinguishes "never synced" from "synced, nothing referred" for the empty-state
+    // message below.
+    val visibleLists = computeVisibleLists(lists, items)
 
     fun persistItems(newItems: List<ToDoItem>) {
         items = newItems
@@ -245,19 +262,36 @@ fun ActiveTasksApp(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // A write-back that comes back RowNotFound means the Sheet itself confirmed the row is gone,
+    // not that the call failed - flag the item as orphaned (offers "Remove locally" on its card)
+    // instead of leaving it retrying forever against a target that no longer exists.
+    fun handleWriteOutcome(item: ToDoItem, outcome: SheetWriteOutcome, notFoundMessage: String, failureMessage: String) {
+        busy = false
+        when (outcome) {
+            SheetWriteOutcome.Success -> {
+                removedDuringSync += item.id
+                persistItems(items.filterNot { it.id == item.id })
+                runSync()
+            }
+            SheetWriteOutcome.RowNotFound -> {
+                orphanedItemIds = orphanedItemIds + item.id
+                actionError = notFoundMessage
+            }
+            is SheetWriteOutcome.Failure -> actionError = failureMessage
+        }
+    }
+
     fun completeForNow(item: ToDoItem) {
         busy = true
         actionError = ""
         coroutineScope.launch {
-            val ok = withContext(Dispatchers.IO) { clearSheetPriority(appsScriptUrl, item.list, item.description, item.taskId) }
-            busy = false
-            if (ok) {
-                removedDuringSync += item.id
-                persistItems(items.filterNot { it.id == item.id })
-                runSync()
-            } else {
-                actionError = "Couldn't reach the Sheet to clear this item's priority - check your connection and try again."
-            }
+            val outcome = withContext(Dispatchers.IO) { clearSheetPriority(appsScriptUrl, item.list, item.description, item.taskId) }
+            handleWriteOutcome(
+                item,
+                outcome,
+                notFoundMessage = "This item's row is no longer in your Sheet - it may have been renamed, moved, or deleted. Remove it locally below, or sync again first if you expect it to still be there.",
+                failureMessage = "Couldn't reach the Sheet to clear this item's priority - check your connection and try again."
+            )
         }
     }
 
@@ -265,16 +299,21 @@ fun ActiveTasksApp(
         busy = true
         actionError = ""
         coroutineScope.launch {
-            val ok = withContext(Dispatchers.IO) { deleteSheetRow(appsScriptUrl, item.list, item.description, item.taskId) }
-            busy = false
-            if (ok) {
-                removedDuringSync += item.id
-                persistItems(items.filterNot { it.id == item.id })
-                runSync()
-            } else {
-                actionError = "Couldn't reach the Sheet to remove this row - check your connection and try again."
-            }
+            val outcome = withContext(Dispatchers.IO) { deleteSheetRow(appsScriptUrl, item.list, item.description, item.taskId) }
+            handleWriteOutcome(
+                item,
+                outcome,
+                notFoundMessage = "This item's row is no longer in your Sheet - it may have been renamed, moved, or deleted. Remove it locally below, or sync again first if you expect it to still be there.",
+                failureMessage = "Couldn't reach the Sheet to remove this row - check your connection and try again."
+            )
         }
+    }
+
+    // The Sheet row is already confirmed gone (RowNotFound) by the time this is offered, so this
+    // is local-only bookkeeping - no further write-back call to make.
+    fun removeLocally(item: ToDoItem) {
+        orphanedItemIds = orphanedItemIds - item.id
+        persistItems(items.filterNot { it.id == item.id })
     }
 
     when (screen) {
@@ -307,6 +346,8 @@ fun ActiveTasksApp(
             initialAppsScriptUrl = appsScriptUrl,
             initialImportanceWeight = importanceWeight,
             initialTopN = topN,
+            openSection = openSettingsSection,
+            onOpenSectionChange = { openSettingsSection = it },
             onScanQr = { screen = Screen.QR_SCANNER },
             // Sync always uses (and commits) whatever's currently typed, even if "Save Settings"
             // hasn't been pressed yet - syncing without a saved URL to sync again next launch
@@ -343,6 +384,7 @@ fun ActiveTasksApp(
             initialList = initialListName(visibleLists, items, importanceWeight, lastList),
             busy = busy,
             actionError = actionError,
+            orphanedItemIds = orphanedItemIds,
             onListOpened = { list ->
                 lastList = list
                 onLastListSaved(list)
@@ -350,7 +392,8 @@ fun ActiveTasksApp(
             onOpenSettings = { screen = Screen.SETTINGS },
             onAdjustItem = { editingItemId = it },
             onCompleteForNow = { item -> completeForNow(item) },
-            onFullyComplete = { item -> fullyComplete(item) }
+            onFullyComplete = { item -> fullyComplete(item) },
+            onRemoveLocally = { item -> removeLocally(item) }
         )
     }
 
@@ -391,6 +434,8 @@ fun SettingsScreen(
     initialAppsScriptUrl: String,
     initialImportanceWeight: Float,
     initialTopN: Int,
+    openSection: String,
+    onOpenSectionChange: (String) -> Unit,
     onScanQr: () -> Unit,
     onSync: (sheetUrl: String, appsScriptUrl: String) -> Unit,
     syncing: Boolean,
@@ -411,10 +456,12 @@ fun SettingsScreen(
     var priorityTilt by remember { mutableStateOf(priorityTiltFromWeight(initialImportanceWeight)) }
     var topN by remember { mutableStateOf(initialTopN) }
     // Accordion: at most one section open at a time. "" means all collapsed. Same pattern as
-    // MicroTasking's SettingsScreen - keep the two in sync stylistically. Google Sheet Connection
-    // only opens by default for a not-yet-connected setup; once connected, it's not the section
-    // people usually want, so nothing pre-opens.
-    var openSection by remember { mutableStateOf(if (initialSheetUrl.isBlank()) "Google Sheet Connection" else "") }
+    // MicroTasking's SettingsScreen - keep the two in sync stylistically. Hoisted up to
+    // ActiveTasksApp (not a local `remember` here) so it survives the round trip through the QR
+    // scanner screen instead of collapsing back to its default in between the two QR scans - see
+    // the call site. Google Sheet Connection only opens by default for a not-yet-connected setup;
+    // once connected, it's not the section people usually want, so nothing pre-opens, but once the
+    // user opens (or closes) a section themselves that choice sticks until they change it again.
 
     @Composable
     fun sectionHeader(title: String) {
@@ -422,7 +469,7 @@ fun SettingsScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { openSection = if (expanded) "" else title },
+                .clickable { onOpenSectionChange(if (expanded) "" else title) },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -607,11 +654,13 @@ fun CarouselScreen(
     initialList: String?,
     busy: Boolean,
     actionError: String,
+    orphanedItemIds: Set<String>,
     onListOpened: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onAdjustItem: (String) -> Unit,
     onCompleteForNow: (ToDoItem) -> Unit,
-    onFullyComplete: (ToDoItem) -> Unit
+    onFullyComplete: (ToDoItem) -> Unit,
+    onRemoveLocally: (ToDoItem) -> Unit
 ) {
     val pagerState = rememberPagerState(
         initialPage = visibleLists.indexOf(initialList).coerceAtLeast(0),
@@ -690,7 +739,11 @@ fun CarouselScreen(
             }
             HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
                 val listName = visibleLists[page]
-                val topItems = sortedForDisplay(items.filter { it.list == listName && !it.done }, importanceWeight).take(topN)
+                // distinctBy is cheap insurance against a duplicate id (two Sheet rows with
+                // identical description text and no Task ID yet) hard-crashing this LazyColumn's
+                // key-by-id below - see mergeImportedToDoItems, which is the primary place this is
+                // supposed to already be prevented.
+                val topItems = sortedForDisplay(items.filter { it.list == listName && !it.done }.distinctBy { it.id }, importanceWeight).take(topN)
                 if (topItems.isEmpty()) {
                     // Reachable mid-session: completing this list's last item removes it from
                     // visibleLists on the next recomposition, but the pager can briefly still be
@@ -711,9 +764,11 @@ fun CarouselScreen(
                             ToDoItemRow(
                                 item = toDoItem,
                                 busy = busy,
+                                orphaned = toDoItem.id in orphanedItemIds,
                                 onAdjust = { onAdjustItem(toDoItem.id) },
                                 onCompleteForNow = { onCompleteForNow(toDoItem) },
-                                onFullyComplete = { onFullyComplete(toDoItem) }
+                                onFullyComplete = { onFullyComplete(toDoItem) },
+                                onRemoveLocally = { onRemoveLocally(toDoItem) }
                             )
                         }
                     }
@@ -735,9 +790,11 @@ private fun quadrantColor(quadrant: Quadrant, colorScheme: androidx.compose.mate
 fun ToDoItemRow(
     item: ToDoItem,
     busy: Boolean,
+    orphaned: Boolean,
     onAdjust: () -> Unit,
     onCompleteForNow: () -> Unit,
-    onFullyComplete: () -> Unit
+    onFullyComplete: () -> Unit,
+    onRemoveLocally: () -> Unit
 ) {
     val context = LocalContext.current
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
@@ -767,12 +824,27 @@ fun ToDoItemRow(
                     Text("Priority & progress")
                 }
             }
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onCompleteForNow, enabled = !busy, modifier = Modifier.weight(1f)) {
-                    Text("Complete (for now)")
+            // Once a write-back has confirmed this row is gone from the Sheet, offering Complete
+            // (for now)/Fully complete again would just repeat the same "not found" outcome - swap
+            // them for a one-way local removal instead (SPEC.md "Harden against user edits").
+            if (orphaned) {
+                Text(
+                    "This item's row is no longer in your Sheet.",
+                    modifier = Modifier.padding(top = 8.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+                OutlinedButton(onClick = onRemoveLocally, enabled = !busy, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                    Text("Remove locally")
                 }
-                Button(onClick = onFullyComplete, enabled = !busy, modifier = Modifier.weight(1f)) {
-                    Text("Fully complete")
+            } else {
+                Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onCompleteForNow, enabled = !busy, modifier = Modifier.weight(1f)) {
+                        Text("Complete (for now)")
+                    }
+                    Button(onClick = onFullyComplete, enabled = !busy, modifier = Modifier.weight(1f)) {
+                        Text("Fully complete")
+                    }
                 }
             }
         }
