@@ -134,19 +134,46 @@ fun parseWriteOutcome(responseCode: Int, responseBody: String): SheetWriteOutcom
     }.getOrDefault(SheetWriteOutcome.Failure(null))
 }
 
-private fun postAction(appsScriptUrl: String, body: JSONObject): SheetWriteOutcome = runCatching {
-    val connection = (URL(appsScriptUrl.trimEnd('/')).openConnection() as HttpURLConnection).apply {
+private const val MAX_REDIRECTS = 5
+private val REDIRECT_CODES = setOf(
+    HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_MOVED_TEMP, HttpURLConnection.HTTP_SEE_OTHER, 307, 308
+)
+
+/**
+ * `{webAppUrl}` (script.google.com/macros/s/.../exec) always 302-redirects to a one-time
+ * script.googleusercontent.com URL that actually serves the response - true for every method, GET
+ * or POST alike. That's transparent for [fetchAllPriorities]'s GET (nothing to lose), but
+ * `HttpURLConnection`'s default auto-follow re-issues the *next* request as a GET on a
+ * 301/302/303, silently dropping a POST's body - every write-back call was landing on Apps
+ * Script's `doGet` with no `action` parameter at all (`{"ok":false,"error":"Unknown or missing
+ * action"}`, itself not matching [ROW_NOT_FOUND_MARKERS], so it surfaced as a generic
+ * "couldn't reach the Sheet" failure instead of ever reaching `doPost`). Auto-follow is disabled
+ * here and the POST is replayed manually against the redirect target instead, so the body survives.
+ */
+private fun postJson(urlString: String, bodyBytes: ByteArray, redirectsLeft: Int = MAX_REDIRECTS): Pair<Int, String> {
+    val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
         requestMethod = "POST"
         doOutput = true
+        instanceFollowRedirects = false
         connectTimeout = CONNECT_TIMEOUT_MS
         readTimeout = READ_TIMEOUT_MS
         setRequestProperty("Content-Type", "application/json; charset=utf-8")
     }
-    connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+    connection.outputStream.use { it.write(bodyBytes) }
     val responseCode = connection.responseCode
+    val location = connection.getHeaderField("Location")
+    if (responseCode in REDIRECT_CODES && redirectsLeft > 0 && location != null) {
+        connection.disconnect()
+        return postJson(location, bodyBytes, redirectsLeft - 1)
+    }
     val responseBody = (if (responseCode in 200..299) connection.inputStream else connection.errorStream)
         ?.bufferedReader()?.readText().orEmpty()
     connection.disconnect()
+    return responseCode to responseBody
+}
+
+private fun postAction(appsScriptUrl: String, body: JSONObject): SheetWriteOutcome = runCatching {
+    val (responseCode, responseBody) = postJson(appsScriptUrl.trimEnd('/'), body.toString().toByteArray(Charsets.UTF_8))
     parseWriteOutcome(responseCode, responseBody)
 }.getOrDefault(SheetWriteOutcome.Failure(null))
 
