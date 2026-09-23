@@ -277,7 +277,12 @@ fun ActiveTasksApp(
                 orphanedItemIds = orphanedItemIds + item.id
                 actionError = notFoundMessage
             }
-            is SheetWriteOutcome.Failure -> actionError = failureMessage
+            // The detail is appended (not the whole message) so a genuine network error still
+            // reads as a network error, but the actual cause - an HTTP status, an unrecognized
+            // Sheet error, a thrown exception's message - is visible instead of guessing blind.
+            // See PUNCH_LIST.md item 1: the referral round trip's on-device verification has
+            // surfaced write-back failures this detail was needed to diagnose.
+            is SheetWriteOutcome.Failure -> actionError = outcome.message?.let { "$failureMessage ($it)" } ?: failureMessage
         }
     }
 

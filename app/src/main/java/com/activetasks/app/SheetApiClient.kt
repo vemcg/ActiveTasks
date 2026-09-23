@@ -124,14 +124,16 @@ private val ROW_NOT_FOUND_MARKERS = listOf(
  * (plain JUnit, no server) the same way the rest of this codebase's string/JSON parsing is.
  */
 fun parseWriteOutcome(responseCode: Int, responseBody: String): SheetWriteOutcome {
-    if (responseCode !in 200..299) return SheetWriteOutcome.Failure(null)
+    if (responseCode !in 200..299) {
+        return SheetWriteOutcome.Failure("HTTP $responseCode: ${responseBody.take(200)}".trim())
+    }
     return runCatching {
         val json = JSONObject(responseBody)
         if (json.optBoolean("ok", false)) return SheetWriteOutcome.Success
         val error = json.optString("error", "")
         if (ROW_NOT_FOUND_MARKERS.any { error.contains(it, ignoreCase = true) }) SheetWriteOutcome.RowNotFound
-        else SheetWriteOutcome.Failure(error.ifBlank { null })
-    }.getOrDefault(SheetWriteOutcome.Failure(null))
+        else SheetWriteOutcome.Failure(error.ifBlank { "Sheet reported failure with no error message" })
+    }.getOrDefault(SheetWriteOutcome.Failure("Unexpected response body: ${responseBody.take(200)}"))
 }
 
 private const val MAX_REDIRECTS = 5
@@ -175,7 +177,7 @@ private fun postJson(urlString: String, bodyBytes: ByteArray, redirectsLeft: Int
 private fun postAction(appsScriptUrl: String, body: JSONObject): SheetWriteOutcome = runCatching {
     val (responseCode, responseBody) = postJson(appsScriptUrl.trimEnd('/'), body.toString().toByteArray(Charsets.UTF_8))
     parseWriteOutcome(responseCode, responseBody)
-}.getOrDefault(SheetWriteOutcome.Failure(null))
+}.getOrElse { SheetWriteOutcome.Failure(it.message ?: it.javaClass.simpleName) }
 
 /**
  * "Complete (for now)": clears importance/urgency so MicroTasking can queue the row again.

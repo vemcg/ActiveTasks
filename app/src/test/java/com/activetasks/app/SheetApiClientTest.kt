@@ -38,11 +38,17 @@ class SheetApiClientTest {
     fun parseWriteOutcome_isFailure_onANon2xxResponseEvenWithOkTrueBody() {
         // A proxy/App Engine error page etc. shouldn't be trusted just because its body happens to
         // parse as {"ok":true} - the HTTP status is checked first.
-        assertTrue(parseWriteOutcome(500, """{"ok":true}""") is SheetWriteOutcome.Failure)
+        val outcome = parseWriteOutcome(500, """{"ok":true}""")
+        assertTrue(outcome is SheetWriteOutcome.Failure)
+        // The status is surfaced (not swallowed to null) so a UI error message has something
+        // concrete to show instead of a generic "check your connection" for every distinct cause.
+        assertTrue((outcome as SheetWriteOutcome.Failure).message!!.contains("500"))
     }
 
     @Test
     fun parseWriteOutcome_isFailure_onGarbageBody() {
-        assertTrue(parseWriteOutcome(200, "not json") is SheetWriteOutcome.Failure)
+        val outcome = parseWriteOutcome(200, "not json")
+        assertTrue(outcome is SheetWriteOutcome.Failure)
+        assertTrue((outcome as SheetWriteOutcome.Failure).message!!.isNotBlank())
     }
 }
