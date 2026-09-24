@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
+// Updated 2026-09-24, after version v0.2.0-21 sheet-surrogate-keys 2026-09-24
 package com.activetasks.app
 
 import android.Manifest
@@ -227,14 +228,16 @@ fun ActiveTasksApp(
                     "sharing is \"Anyone with the link can view\"."
                 return@launch
             }
-            val imported = withContext(Dispatchers.IO) {
-                val prioritiesByTab = fetchAllPriorities(appsScriptUrl)
+            val prioritiesByTab = withContext(Dispatchers.IO) {
+                fetchAllPriorities(appsScriptUrl)
                     .groupBy { it.category }
                     .mapValues { (_, rows) ->
                         // Keyed by taskId (preferred) when the row has one, else by description
                         // text - see toDoItemsFromReferredRows, which looks up the same way.
                         rows.associate { (it.taskId?.let { id -> "id:$id" } ?: it.description) to it.priority }
                     }
+            }
+            val imported = withContext(Dispatchers.IO) {
                 tabs.flatMap { tab ->
                     toDoItemsFromReferredRows(tab.csv, tab.tabName, prioritiesByTab[tab.tabName].orEmpty())
                 }
@@ -242,7 +245,20 @@ fun ActiveTasksApp(
             syncing = false
             persistItems(mergeImportedToDoItems(imported.filterNot { it.id in removedDuringSync }, items))
             persistLists(tabs.map { it.tabName })
-            syncMessage = "Synced ${tabs.size} list(s)."
+            // A tab the Apps Script says has referred rows (getPriorities returned something for
+            // that category) but that produced zero matched items is a real anomaly - unlike a
+            // tab with nothing referred at all, which is normal under gated ingestion and stays
+            // silent here. Surfaces a mismatch (Sheet-side row edited/renamed since referral, a
+            // missing/misnamed Description header, an unchecked column A, etc.) instead of the
+            // tab just silently never getting a carousel page with no clue why.
+            val mismatchedTabs = tabs.map { it.tabName }
+                .filter { tabName -> prioritiesByTab[tabName].orEmpty().isNotEmpty() && imported.none { it.list == tabName } }
+            syncMessage = if (mismatchedTabs.isEmpty()) {
+                "Synced ${tabs.size} list(s)."
+            } else {
+                "Synced ${tabs.size} list(s). Referred rows didn't match any Sheet row in: " +
+                    "${mismatchedTabs.joinToString(", ")}."
+            }
             if (resyncPending) {
                 resyncPending = false
                 runSync()
