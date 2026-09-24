@@ -1,8 +1,10 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
+// Updated 2026-09-24, after version v0.2.0-78 sheet-surrogate-keys 2026-09-23
 package com.activetasks.app
 
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
@@ -19,14 +21,29 @@ private fun unescapeXmlEntities(text: String): String = text
     .replace("&gt;", ">")
 
 /**
+ * Opens [urlString] with a cache-busting query param plus no-cache request headers - confirmed
+ * on-device (2026-09-24) that Google's CDN can keep serving a stale `/export?format=xlsx` snapshot
+ * for a spreadsheet well after a new tab was added to it, so a plain fetch of the same URL can
+ * silently miss structural changes (new/renamed tabs) for an indefinite number of sync cycles even
+ * though per-tab cell data (fetched via the gviz endpoint, same treatment here) comes through fine.
+ */
+private fun openNoCacheConnection(urlString: String): HttpURLConnection {
+    val bustUrl = urlString + (if ('?' in urlString) "&" else "?") + "_=${System.currentTimeMillis()}"
+    return (URL(bustUrl).openConnection() as HttpURLConnection).apply {
+        useCaches = false
+        setRequestProperty("Cache-Control", "no-cache")
+    }
+}
+
+/**
  * Lists the spreadsheet's tab names in order by downloading the full workbook as .xlsx and
  * reading the sheet names straight out of the zip's xl/workbook.xml entry - no need to parse
  * actual cell data out of the xlsx, since tab data is still fetched per-name via the gviz CSV
  * export below.
  */
 private fun fetchSheetTabNamesViaXlsx(spreadsheetId: String): List<String> = runCatching {
-    val url = URL("https://docs.google.com/spreadsheets/d/$spreadsheetId/export?format=xlsx")
-    java.util.zip.ZipInputStream(url.openStream()).use { zip ->
+    val connection = openNoCacheConnection("https://docs.google.com/spreadsheets/d/$spreadsheetId/export?format=xlsx")
+    java.util.zip.ZipInputStream(connection.inputStream).use { zip ->
         var entry = zip.nextEntry
         while (entry != null) {
             if (entry.name == "xl/workbook.xml") {
@@ -44,7 +61,8 @@ private fun fetchSheetTabNamesViaXlsx(spreadsheetId: String): List<String> = run
 /** Lists the spreadsheet's tab names via the legacy public worksheet feed - a fallback since Google has deprecated this GData API for many accounts. */
 private fun fetchSheetTabNames(spreadsheetId: String): List<String> = runCatching {
     val feedUrl = "https://spreadsheets.google.com/feeds/worksheets/$spreadsheetId/public/basic?alt=json"
-    val feed = JSONObject(URL(feedUrl).readText()).optJSONObject("feed") ?: return@runCatching emptyList()
+    val feed = JSONObject(openNoCacheConnection(feedUrl).inputStream.bufferedReader().readText())
+        .optJSONObject("feed") ?: return@runCatching emptyList()
     val entries = when (val entry = feed.opt("entry")) {
         is JSONArray -> entry
         is JSONObject -> JSONArray().put(entry)
@@ -57,7 +75,7 @@ private fun fetchSheetTabNames(spreadsheetId: String): List<String> = runCatchin
 private fun fetchSheetTabCsv(spreadsheetId: String, tabName: String): String = runCatching {
     val encodedName = URLEncoder.encode(tabName, "UTF-8")
     val url = "https://docs.google.com/spreadsheets/d/$spreadsheetId/gviz/tq?tqx=out:csv&sheet=$encodedName"
-    URL(url).readText()
+    openNoCacheConnection(url).inputStream.bufferedReader().readText()
 }.getOrDefault("")
 
 /**
