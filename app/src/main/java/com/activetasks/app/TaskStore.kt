@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
+// Updated 2026-09-25, after version v0.2.0-27 main 2026-09-25
 package com.activetasks.app
 
 import android.content.Context
@@ -308,6 +309,13 @@ object TaskStore {
             val keepIds = eventAddedAt.filterValues { it >= readStartedAt }.keys
             eventAddedAt.keys.retainAll(keepIds)
             setItems(context, reconcileWithSheet(imported, _items.value, _pending.value, keepIds))
+            // A completion whose write's own HTTP response never came back as a confirmed Success
+            // (dropped connection, timeout) but that this read shows already landed on the Sheet:
+            // stop retrying it instead of leaving it "stuck" forever - see reconcileCompletedPending.
+            val confirmedPending = reconcileCompletedPending(_pending.value, tabs, prioritiesByTab.mapValues { it.value.keys })
+            if (confirmedPending.size != _pending.value.size) {
+                setPending(context, confirmedPending, stuck = _stuckCount.value > 0)
+            }
             _lists.value = tabs.map { it.tabName }
             preferences.edit().putString(KEY_LISTS, writeStringList(_lists.value)).apply()
         }

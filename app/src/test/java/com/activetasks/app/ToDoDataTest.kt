@@ -204,6 +204,59 @@ class ToDoDataTest {
     }
 
     @Test
+    fun reconcileCompletedPending_dropsAClearPriorityChange_whenItsRowIsNoLongerReferred() {
+        // The write's own HTTP response never came back as Success, but this sync's read shows the
+        // row is no longer among "List"'s referred rows - the clear already landed.
+        val pending = listOf(PendingChange(PendingOp.CLEAR_PRIORITY, "sheet-List-A", "List", "A", taskId = null))
+        val tabs = listOf(SheetTabCsv("List", "checked,description\nTRUE,A\n"))
+        val referredKeysByTab = mapOf("List" to emptySet<String>())
+        assertTrue(reconcileCompletedPending(pending, tabs, referredKeysByTab).isEmpty())
+    }
+
+    @Test
+    fun reconcileCompletedPending_keepsAClearPriorityChange_whenItsRowIsStillReferred() {
+        val pending = listOf(PendingChange(PendingOp.CLEAR_PRIORITY, "sheet-List-A", "List", "A", taskId = null))
+        val tabs = listOf(SheetTabCsv("List", "checked,description\nTRUE,A\n"))
+        val referredKeysByTab = mapOf("List" to setOf("A"))
+        assertEquals(pending, reconcileCompletedPending(pending, tabs, referredKeysByTab))
+    }
+
+    @Test
+    fun reconcileCompletedPending_dropsADeleteRowChange_whenItsRowIsGoneFromTheTab() {
+        val pending = listOf(PendingChange(PendingOp.DELETE_ROW, "sheet-List-A", "List", "A", taskId = null))
+        val tabs = listOf(SheetTabCsv("List", "checked,description\nTRUE,B\n"))
+        assertTrue(reconcileCompletedPending(pending, tabs, referredKeysByTab = emptyMap()).isEmpty())
+    }
+
+    @Test
+    fun reconcileCompletedPending_matchesByTaskIdOverDescription() {
+        // The description changed in the Sheet since this item was imported; the taskId still ties
+        // the pending change to the row's current referred-rows key.
+        val pending = listOf(PendingChange(PendingOp.CLEAR_PRIORITY, "sheet-abc-123", "List", "Old text", taskId = "abc-123"))
+        val tabs = listOf(SheetTabCsv("List", "checked,description,Task ID\nTRUE,New text,abc-123\n"))
+        val referredKeysByTab = mapOf("List" to setOf("id:abc-123"))
+        assertEquals(pending, reconcileCompletedPending(pending, tabs, referredKeysByTab))
+    }
+
+    @Test
+    fun reconcileCompletedPending_leavesAChangeQueued_whenItsTabWasntInThisRead() {
+        // A tab missing from this sync's read isn't evidence the write landed - leave it for the
+        // write's own RowNotFound handling instead of guessing.
+        val pending = listOf(PendingChange(PendingOp.CLEAR_PRIORITY, "sheet-List-A", "List", "A", taskId = null))
+        assertEquals(pending, reconcileCompletedPending(pending, tabs = emptyList(), referredKeysByTab = emptyMap()))
+    }
+
+    @Test
+    fun reconcileCompletedPending_neverDropsASetPriorityChange() {
+        val pending = listOf(
+            PendingChange(PendingOp.SET_PRIORITY, "sheet-List-A", "List", "A", taskId = null, importance = 0.5f, urgency = 0.5f)
+        )
+        val tabs = listOf(SheetTabCsv("List", "checked,description\nTRUE,A\n"))
+        val referredKeysByTab = mapOf("List" to emptySet<String>())
+        assertEquals(pending, reconcileCompletedPending(pending, tabs, referredKeysByTab))
+    }
+
+    @Test
     fun reconcileWithSheet_dedupesCollidingIdsWithinOneImportBatch() {
         // Two sheet rows with identical description text and no Task ID collide on the same id -
         // LazyColumn would hard-crash on the duplicate key.

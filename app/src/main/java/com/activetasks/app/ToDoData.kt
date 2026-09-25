@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-// Updated 2026-09-24, after version v0.2.0-24 main 2026-09-24
+// Updated 2026-09-25, after version v0.2.0-27 main 2026-09-25
 package com.activetasks.app
 
 import org.json.JSONArray
@@ -298,6 +298,47 @@ fun reconcileWithSheet(
     val rebuiltIds = rebuilt.mapTo(mutableSetOf()) { it.id }
     val kept = existing.filter { it.id in keepIds && it.id !in rebuiltIds && it.id !in pendingCompletionIds }
     return (rebuilt + kept).distinctBy { it.id }
+}
+
+/** A pending change's identity key, matching how [toDoItemsFromReferredRows] looks priorities up. */
+private fun PendingChange.rowKey(): String = taskId?.let { "id:$it" } ?: description
+private fun SheetRow.rowKey(): String = taskId?.let { "id:$it" } ?: description
+
+/**
+ * Drops queued completions that a fresh, successful sync's Sheet read shows have already taken
+ * effect - Sheet truth (SPEC.md "Synchronization"), independent of whether the write's own HTTP
+ * response was ever classified as [SheetWriteOutcome.Success]. A dropped connection or timeout
+ * after Apps Script's `doPost` has already run - it mutates the row and only *then* produces the
+ * redirect response the client reads back - leaves a completion looking permanently "stuck" even
+ * though the Sheet already reflects it; this lets the next sync notice and self-heal instead of
+ * retrying (and showing "N changes waiting") forever.
+ *
+ * A queued [PendingOp.CLEAR_PRIORITY] is confirmed once its tab was read this sync and its row is
+ * no longer among that tab's referred rows; a queued [PendingOp.DELETE_ROW] is confirmed once its
+ * tab was read this sync and its row no longer appears in that tab's Sheet rows at all. Only fires
+ * when the change's own tab was actually present in this read - a tab missing from a [tabs]/
+ * [referredKeysByTab] entry (renamed, or this specific tab failed) isn't evidence of anything, and
+ * is left for the write's own [SheetWriteOutcome.RowNotFound] handling instead.
+ *
+ * Never touches [PendingOp.SET_PRIORITY]: a Sheet read matching the queued importance/urgency isn't
+ * proof our write landed (someone else, or MicroTasking, could have written the same-looking
+ * values), so misreading that as "done" could silently drop a real unsent change.
+ */
+fun reconcileCompletedPending(
+    pending: List<PendingChange>,
+    tabs: List<SheetTabCsv>,
+    referredKeysByTab: Map<String, Set<String>>
+): List<PendingChange> {
+    val rowsByTab = tabs.associate { it.tabName to parseToDoCsvRows(it.csv) }
+    return pending.filterNot { change ->
+        when (change.op) {
+            PendingOp.CLEAR_PRIORITY ->
+                referredKeysByTab[change.category]?.let { change.rowKey() !in it } ?: false
+            PendingOp.DELETE_ROW ->
+                rowsByTab[change.category]?.let { rows -> rows.none { it.rowKey() == change.rowKey() } } ?: false
+            PendingOp.SET_PRIORITY -> false
+        }
+    }
 }
 
 /**
