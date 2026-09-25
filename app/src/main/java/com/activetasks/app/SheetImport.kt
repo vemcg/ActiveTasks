@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-// Updated 2026-09-24, after version v0.2.0-78 sheet-surrogate-keys 2026-09-23
+// Updated 2026-09-24, after version v0.2.0-25 synchronization-improvements 2026-09-24
 package com.activetasks.app
 
 import org.json.JSONArray
@@ -12,6 +12,18 @@ data class SheetTabCsv(val tabName: String, val csv: String)
 
 fun extractGoogleSheetId(url: String): String? =
     Regex("/spreadsheets/d/([a-zA-Z0-9_-]+)").find(url)?.groupValues?.getOrNull(1)
+
+/**
+ * Whether saving [newUrl] over [oldUrl] points the app at a different spreadsheet - compared by
+ * spreadsheet id, not URL text, so the same Sheet written another way (the QR's bare `/d/<id>` vs a
+ * pasted `/edit#gid=0`) doesn't count. A blank or unparseable URL on either side never counts:
+ * there's no other Sheet to switch to. Same rule as MicroTasking's.
+ */
+fun isDifferentSheet(oldUrl: String, newUrl: String): Boolean {
+    val oldId = extractGoogleSheetId(oldUrl) ?: return false
+    val newId = extractGoogleSheetId(newUrl) ?: return false
+    return oldId != newId
+}
 
 private fun unescapeXmlEntities(text: String): String = text
     .replace("&amp;", "&")
@@ -71,12 +83,12 @@ private fun fetchSheetTabNames(spreadsheetId: String): List<String> = runCatchin
     List(entries.length()) { index -> entries.getJSONObject(index).getJSONObject("title").getString("\$t") }
 }.getOrDefault(emptyList())
 
-/** Fetches one tab's rows as CSV, addressed by tab name rather than gid. */
-private fun fetchSheetTabCsv(spreadsheetId: String, tabName: String): String = runCatching {
+/** Fetches one tab's rows as CSV, addressed by tab name rather than gid. Null if the fetch failed. */
+private fun fetchSheetTabCsv(spreadsheetId: String, tabName: String): String? = runCatching {
     val encodedName = URLEncoder.encode(tabName, "UTF-8")
     val url = "https://docs.google.com/spreadsheets/d/$spreadsheetId/gviz/tq?tqx=out:csv&sheet=$encodedName"
     openNoCacheConnection(url).inputStream.bufferedReader().readText()
-}.getOrDefault("")
+}.getOrNull()
 
 /**
  * Splits full CSV text into logical records, each possibly spanning multiple physical lines when a
@@ -149,14 +161,16 @@ fun splitCsvLine(line: String): List<String> {
 /**
  * Fetches every tab of the spreadsheet at [url] as raw CSV text, one entry per tab, in tab order.
  * The README tab (a MicroTasking-sheet convention, present on the shared sheet this points at) is
- * skipped. Returns an empty list if the sheet's tabs can't be enumerated at all (e.g. sharing
- * settings block it) - there's no single-tab fallback here because unlike MicroTasking's task
- * pool, a to-do list without a list name to file it under isn't useful.
+ * skipped. Returns null if the read failed: the tabs can't be enumerated at all (bad URL, sharing
+ * settings block it, offline), or any single tab's fetch failed. All or nothing, because the sync
+ * treats the Sheet as definitive - a tab that silently read as empty would remove all its items
+ * (SPEC.md "Synchronization" > "What a sync does").
  */
-fun fetchSheetTabs(url: String): List<SheetTabCsv> {
-    val spreadsheetId = extractGoogleSheetId(url) ?: return emptyList()
+fun fetchSheetTabs(url: String): List<SheetTabCsv>? {
+    val spreadsheetId = extractGoogleSheetId(url) ?: return null
     val tabNames = fetchSheetTabNamesViaXlsx(spreadsheetId)
         .ifEmpty { fetchSheetTabNames(spreadsheetId) }
         .filter { !it.equals("README", ignoreCase = true) }
-    return tabNames.map { tabName -> SheetTabCsv(tabName, fetchSheetTabCsv(spreadsheetId, tabName)) }
+    if (tabNames.isEmpty()) return null
+    return tabNames.map { tabName -> SheetTabCsv(tabName, fetchSheetTabCsv(spreadsheetId, tabName) ?: return null) }
 }

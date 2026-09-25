@@ -39,8 +39,8 @@
      Sheet-URL field, which mangles the two-line QR the current onboarding page makes and would
      the new one-line connection code). Store the connection code, show it with the key masked,
      never log it.
-   - `SheetApiClient.kt`: stop `fetchAllPriorities` swallowing every failure into an empty list
-     (a wrong/rotated key must not look like "nothing referred"); build URLs so an existing
+   - `SheetApiClient.kt`: ~~stop `fetchAllPriorities` swallowing every failure into an empty list~~
+     (done 2026-09-24 for item 5 - it returns null on failure); build URLs so an existing
      `?key=` survives (`"$url?action=…"` concatenation breaks it); parse the `code` field; add
      `hello`, `getTasks`, `createRow`, `setPriority`; treat `no_such_*` as "changed in your
      Sheet" + resync, `unauthorized` as "rescan", `busy` as one retry.
@@ -82,7 +82,9 @@
      without a `taskId`, one is silently dropped; the real fix is `taskId` reaching every row), plus
      a defensive `distinctBy` right before the `LazyColumn` itself in `CarouselScreen` as the "de-dup
      right before rendering" belt-and-suspenders the plan called for.
-   - **"Remove locally" for an item whose Sheet row no longer resolves.** **Done**: `SheetApiClient`
+   - **"Remove locally" for an item whose Sheet row no longer resolves.** *Superseded 2026-09-24
+     by item 5: the Sheet is now definitive, so a vanished row just drops its item and the button
+     is gone. `RowNotFound` survives as "dequeue the pending write".* Was done: `SheetApiClient`
      now returns a `SheetWriteOutcome` (`Success`/`RowNotFound`/`Failure`) instead of a bare
      `Boolean`, classifying MicroTasking's `doPost` error text ("No tab named …", "No row matching
      that description", "No row with that task id") as `RowNotFound` - a confirmed-gone row, not a
@@ -110,7 +112,7 @@
        import has the same underlying gap, noted in its `PUNCH_LIST.md` item 1 follow-ups - not
        fixed there by this change, since that's a separate parser in a separate repo.)
    - **Still open / dangling tech debt** (flagged for the user, not silently deferred):
-     - A `taskId`-bearing item's `list` field goes cosmetically stale after its tab is renamed - it
+     - *Fixed 2026-09-24 by item 5 (a sync now takes `list` from the Sheet):* A `taskId`-bearing item's `list` field goes cosmetically stale after its tab is renamed - it
        keeps writing through correctly (`taskId` lookup ignores category) and stays visible (via
        `computeVisibleLists`'s union above), but the carousel page/header still shows the *old* tab
        name until the item is completed and the row re-referred fresh. Full fix would mean letting a
@@ -124,3 +126,13 @@
      - `RowNotFound` detection depends on matching the *current* v1 script's exact English error
        wording (see tech debt note above) - it fails safe (falls back to generic retryable
        `Failure`) but should move to structured error codes once item 3 lands.
+5. **Automatic synchronization: Sheet-definitive sync, pending-changes queue, cross-app messages**
+   — *specified and built 2026-09-24 (`SPEC.md` "Synchronization"; `TaskStore.kt`,
+   `TaskEvents.kt`); unit-tested, not yet verified on-device.* MicroTasking's side is built in its
+   own repo by its session against the same message contract.
+   - **Remaining**: on-device check with both apps' shared-key builds installed - refer in
+     MicroTasking and watch it appear in ActiveTasks (including split screen); complete here and
+     watch MicroTasking re-queue it; complete while offline and confirm "N changes waiting" shows
+     and then clears when the network returns without reopening the app.
+   - Existing ActiveTasks installs must be uninstalled once (signing key changed to MicroTasking's);
+     the install page says so.
