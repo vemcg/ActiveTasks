@@ -193,15 +193,29 @@ object TaskStore {
 
     // --- network: flush, sync, switch Sheet ---
 
-    /** Starts a flush in the background; returns immediately. */
+    /**
+     * Starts a flush in the background; returns immediately. Also schedules the reliable
+     * WorkManager fallback right now, unconditionally - not only after the optimistic attempt
+     * below fails, which is too late once the app is backgrounded: Android can freeze a background
+     * process's threads (no CPU time at all, network included) before this fire-and-forget
+     * coroutine ever gets to run, let alone reach the point where a failed attempt would schedule
+     * the fallback. Scheduling it up front means a completion or priority change queued right
+     * before the user switches away still has a guaranteed OS-backed retry, instead of depending on
+     * this coroutine surviving long enough to notice it needs one. [flush] cancels the scheduled
+     * work again once the queue is actually empty, so the common case (foregrounded, good network)
+     * costs nothing beyond one redundant enqueue/cancel.
+     */
     fun requestFlush(context: Context) {
         val appContext = context.applicationContext
+        scheduleFlushWork(WorkManager.getInstance(appContext))
         scope.launch { flush(appContext) }
     }
 
     /**
      * Sends every queued change it can. Returns how many are left. Outside the worker, a leftover
-     * schedules the one-shot network-return job; an empty queue cancels it.
+     * (re)confirms the one-shot network-return job [requestFlush] already scheduled up front (a
+     * harmless no-op, [scheduleFlushWork] keeps whichever is already queued); an empty queue cancels
+     * the now-unneeded job instead.
      */
     suspend fun flush(context: Context, fromWorker: Boolean = false): Int {
         ensureLoaded(context)
