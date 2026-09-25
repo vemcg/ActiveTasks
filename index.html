@@ -178,16 +178,26 @@
       </div>
       <ol>
         <li>
-          <strong>Scan or Download:</strong> Point your phone's camera at the QR code below, or tap its download link if you are viewing this page on your phone:
-          <div class="qr-container">
-            
-            <img src="qr-0.2.0-24.png" alt="ActiveTasks APK QR Code (v0.2.0-24)">
+          <strong>Scan or Download:</strong> Point your phone's camera at the <strong>Stable Release</strong> QR code (on the left) below, or tap its download link if you are viewing this page on your phone:
+          <div class="qr-row">
+            <div class="qr-container">
+            <div class="qr-label">Stable Release</div>
+            <img src="qr-main-0.2.0-24.png" alt="ActiveTasks APK QR Code (v0.2.0-24)">
             <br>
             <a href="https://github.com/vemcg/ActiveTasks/releases/download/v0.2.0-24/ActiveTasks-v0.2.0-24.apk" class="btn" target="_blank" rel="noopener">Download ActiveTasks APK (v0.2.0-24)</a>
             <br>
             <a href="https://github.com/vemcg/ActiveTasks/releases/download/v0.2.0-24/ActiveTasks-v0.2.0-24.apk" target="_blank" rel="noopener">Open the download again</a>
           </div>
-          
+            <div class="qr-container">
+            <div class="qr-label">synchronization-improvements</div>
+            <img src="qr-0.2.0-25.png" alt="ActiveTasks APK QR Code (v0.2.0-25)">
+            <br>
+            <a href="https://github.com/vemcg/ActiveTasks/releases/download/v0.2.0-25/ActiveTasks-v0.2.0-25.apk" class="btn" target="_blank" rel="noopener">Download ActiveTasks APK (v0.2.0-25)</a>
+            <br>
+            <a href="https://github.com/vemcg/ActiveTasks/releases/download/v0.2.0-25/ActiveTasks-v0.2.0-25.apk" target="_blank" rel="noopener">Open the download again</a>
+          </div>
+          </div>
+          <p class="qr-guidance"><strong>Which one to use:</strong> Install from the <strong>Stable Release</strong> on the left &mdash; that is the build you should download and run. The <strong>synchronization-improvements</strong> development build on the right is an in-progress branch, published for testing only. You are welcome to try it, but it may be unstable, may fail to install or launch, and carries no guarantee that it works at all.</p>
         </li>
         <li>
           <strong>Allow Sideloading (First Time Only):</strong>
@@ -196,6 +206,13 @@
             <li>If Android displays <em>"For your security, your phone is not allowed to install unknown apps from this source"</em>, tap <strong>Settings</strong>, toggle <strong>Allow from this source</strong> to ON, then go back and tap <strong>Install</strong>.</li>
             <li>If Google Play Protect displays a warning, tap <strong>More details &rarr; Install anyway</strong>.</li>
           </ul>
+        </li>
+        <li>
+          <strong>Updating from a build before September 24, 2026? Uninstall it first, once.</strong>
+          ActiveTasks is now signed with the same key as MicroTasking, so the two apps can update each
+          other instantly, and Android won't install it over an older copy signed with the old key
+          ("App not installed"). Uninstall ActiveTasks, then install this one. Your lists come back
+          from your Sheet on the first sync; only progress percentages are lost.
         </li>
       </ol>
     </section>
@@ -218,7 +235,7 @@
           same two codes for both apps, so if you already made them for MicroTasking, reuse them.
         </li>
         <li>Open <strong>ActiveTasks</strong> on your Android phone, open <strong>Settings</strong> and tap <strong>Scan Sheet QR Code</strong> and <strong>Scan Web App QR Code</strong> to scan the two codes (each is filed by what it contains, so a mix-up can't overwrite the other box). Or paste the two URLs into the boxes by hand.</li>
-        <li>Tap <strong>Sync Lists</strong>.</li>
+        <li>Tap <strong>Save Settings</strong>. ActiveTasks syncs with your Sheet and opens your lists. From then on it stays in sync on its own.</li>
       </ol>
     </section>
 
