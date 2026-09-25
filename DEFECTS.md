@@ -56,5 +56,15 @@ enough to notice it needs one. The existing post-attempt logic still cancels tha
 again once the optimistic attempt actually empties the queue, so the common case (foregrounded,
 good network) costs nothing beyond one redundant enqueue/cancel.
 
+**Compounding contributor, found after the above**: `SheetImport.kt`'s `openNoCacheConnection` (used
+by all three of `fetchSheetTabs`'s HTTP calls - tab-name discovery via both the xlsx and legacy-feed
+paths, and each tab's CSV fetch) never set an explicit connect/read timeout, so a stalled request
+there would hang forever instead of failing fast - and since every one of those calls runs inside
+sync's single `networkMutex` (the same lock every flush also waits on), one stuck read could freeze
+not just that sync but every other queued network operation behind it too. Fixed by adding the same
+15s/15s timeouts `SheetApiClient.kt` already used. Found by symmetry with MicroTasking's parallel
+report of the identical gap in its own non-Web-App-client Sheet reads (see below) - confirmed by
+checking this file, not assumed.
+
 No MicroTasking-side change needed - the flush path is entirely on this app's side of the
 hand-off (MicroTasking's own receipt of the resulting broadcast is already immediate on arrival).

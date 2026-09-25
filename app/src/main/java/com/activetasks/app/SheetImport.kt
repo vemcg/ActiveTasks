@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-// Updated 2026-09-24, after version v0.2.0-25 synchronization-improvements 2026-09-24
+// Updated 2026-09-25, after version v0.2.0-27 main 2026-09-25
 package com.activetasks.app
 
 import org.json.JSONArray
@@ -32,6 +32,15 @@ private fun unescapeXmlEntities(text: String): String = text
     .replace("&lt;", "<")
     .replace("&gt;", ">")
 
+// Matches SheetApiClient.kt's timeouts. Without an explicit value, HttpURLConnection's
+// connect/read timeouts default to 0 - wait forever - so a stalled request here (this file's
+// three call sites all run inside sync's single networkMutex, which also gates every flush) could
+// hang not just this read but every other queued network operation along with it. DEFECTS.md
+// item 2's cross-app hand-off report: MicroTasking found and fixed the identical gap in its own
+// non-Web-App-client Sheet reads.
+private const val CONNECT_TIMEOUT_MS = 15_000
+private const val READ_TIMEOUT_MS = 15_000
+
 /**
  * Opens [urlString] with a cache-busting query param plus no-cache request headers - confirmed
  * on-device (2026-09-24) that Google's CDN can keep serving a stale `/export?format=xlsx` snapshot
@@ -44,6 +53,8 @@ private fun openNoCacheConnection(urlString: String): HttpURLConnection {
     return (URL(bustUrl).openConnection() as HttpURLConnection).apply {
         useCaches = false
         setRequestProperty("Cache-Control", "no-cache")
+        connectTimeout = CONNECT_TIMEOUT_MS
+        readTimeout = READ_TIMEOUT_MS
     }
 }
 
