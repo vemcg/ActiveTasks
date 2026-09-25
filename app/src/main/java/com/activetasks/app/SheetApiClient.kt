@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
+// Updated 2026-09-24, after version v0.2.0-24 main 2026-09-24
 package com.activetasks.app
 
 import org.json.JSONObject
@@ -63,12 +64,17 @@ private const val READ_TIMEOUT_MS = 15_000
  * Fetches every currently-referred row (across all tabs) in one call. A row absent from the
  * result has not been referred (no importance/urgency set) and must not be imported - see
  * [toDoItemsFromReferredRows], which callers feed by grouping this list per tab/category.
+ *
+ * Null means the read failed (network, HTTP error, `ok:false`, unparseable body) - never an empty
+ * list, since under the Sheet-definitive sync an empty result removes every item (SPEC.md
+ * "Synchronization" > "What a sync does").
  */
-fun fetchAllPriorities(appsScriptUrl: String): List<ReferredRow> = runCatching {
-    val url = "${appsScriptUrl.trimEnd('/')}?action=getPriorities"
-    val json = JSONObject(URL(url).readText())
-    if (!json.optBoolean("ok", false)) return@runCatching emptyList()
-    val rows = json.optJSONArray("rows") ?: return@runCatching emptyList()
+fun fetchAllPriorities(appsScriptUrl: String): List<ReferredRow>? = runCatching {
+    val (responseCode, responseBody) = httpGet("${appsScriptUrl.trimEnd('/')}?action=getPriorities")
+    if (responseCode !in 200..299) return@runCatching null
+    val json = JSONObject(responseBody)
+    if (!json.optBoolean("ok", false)) return@runCatching null
+    val rows = json.optJSONArray("rows") ?: return@runCatching null
     (0 until rows.length()).mapNotNull { i ->
         val row = rows.getJSONObject(i)
         val category = row.optString("category")
@@ -84,7 +90,7 @@ fun fetchAllPriorities(appsScriptUrl: String): List<ReferredRow> = runCatching {
             )
         )
     }
-}.getOrDefault(emptyList())
+}.getOrNull()
 
 /**
  * Result of a write-back POST (setPriority/clearPriority/deleteRow). [RowNotFound] means the Web
@@ -228,3 +234,32 @@ fun deleteSheetRow(appsScriptUrl: String, category: String, description: String,
             if (taskId != null) put("taskId", taskId)
         }
     )
+
+/** Re-triage: writes new importance/urgency to the row, sent the same way as [clearSheetPriority]. */
+fun setSheetPriority(
+    appsScriptUrl: String,
+    category: String,
+    description: String,
+    taskId: String?,
+    importance: Float,
+    urgency: Float
+): SheetWriteOutcome =
+    postAction(
+        appsScriptUrl,
+        JSONObject().apply {
+            put("action", "setPriority")
+            put("category", category)
+            put("description", description)
+            if (taskId != null) put("taskId", taskId)
+            put("importance", importance.toDouble())
+            put("urgency", urgency.toDouble())
+        }
+    )
+
+/** Sends one queued Sheet write - see [PendingChange]. */
+fun sendPendingChange(appsScriptUrl: String, change: PendingChange): SheetWriteOutcome = when (change.op) {
+    PendingOp.CLEAR_PRIORITY -> clearSheetPriority(appsScriptUrl, change.category, change.description, change.taskId)
+    PendingOp.DELETE_ROW -> deleteSheetRow(appsScriptUrl, change.category, change.description, change.taskId)
+    PendingOp.SET_PRIORITY ->
+        setSheetPriority(appsScriptUrl, change.category, change.description, change.taskId, change.importance, change.urgency)
+}

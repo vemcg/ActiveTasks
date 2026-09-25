@@ -5,6 +5,19 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- Cross-app task messages with MicroTasking (SPEC.md "Synchronization" > "Message contract,
+         v1"). Both apps declare the same signature-level permission, so install order doesn't
+         matter and only an app signed with the same key can send to either receiver. -->
+    <permission
+        android:name="com.vernmcgeorge.tasks.permission.TASK_EVENTS"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="com.vernmcgeorge.tasks.permission.TASK_EVENTS" />
+
+    <!-- Package visibility (Android 11+): without this, messages to MicroTasking are silently dropped. -->
+    <queries>
+        <package android:name="com.microtasking.app" />
+    </queries>
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -21,6 +34,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <receiver
+            android:name=".TaskEventReceiver"
+            android:exported="true"
+            android:permission="com.vernmcgeorge.tasks.permission.TASK_EVENTS">
+            <intent-filter>
+                <action android:name="com.vernmcgeorge.tasks.action.TASK_EVENT" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

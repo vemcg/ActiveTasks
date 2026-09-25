@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-// Updated 2026-09-24, after version v0.2.0-21 sheet-surrogate-keys 2026-09-24
+// Updated 2026-09-24, after version v0.2.0-24 main 2026-09-24
 package com.activetasks.app
 
 import android.Manifest
@@ -65,11 +65,11 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -88,42 +88,29 @@ import androidx.core.content.ContextCompat
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.drop
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val storedItems = readToDoItems(preferences.getString("todo_items", "[]") ?: "[]")
-        val loadedItems = itemsToLoad(preferences.getInt("items_schema", 1), storedItems)
-        if (loadedItems != storedItems || preferences.getInt("items_schema", 1) < ITEMS_SCHEMA_VERSION) {
-            preferences.edit()
-                .putString("todo_items", writeToDoItems(loadedItems))
-                .putInt("items_schema", ITEMS_SCHEMA_VERSION)
-                .apply()
-        }
+        TaskStore.ensureLoaded(this)
         setContent {
             MaterialTheme(colorScheme = activeTasksColorScheme) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     ActiveTasksApp(
-                        initialSheetUrl = preferences.getString("sheet_url", "") ?: "",
-                        initialAppsScriptUrl = preferences.getString("apps_script_url", "") ?: "",
+                        initialSheetUrl = preferences.getString(TaskStore.KEY_SHEET_URL, "") ?: "",
+                        initialAppsScriptUrl = preferences.getString(TaskStore.KEY_APPS_SCRIPT_URL, "") ?: "",
                         initialImportanceWeight = preferences.getFloat("importance_weight", DEFAULT_IMPORTANCE_WEIGHT),
                         initialTopN = preferences.getInt("top_n", 5),
-                        initialItems = loadedItems,
-                        initialLists = readStringList(preferences.getString("known_lists", "[]") ?: "[]"),
-                        initialLastList = preferences.getString("last_list", null),
-                        onSheetUrlSaved = { url -> preferences.edit().putString("sheet_url", url).apply() },
-                        onAppsScriptUrlSaved = { url -> preferences.edit().putString("apps_script_url", url).apply() },
+                        initialLastList = preferences.getString(TaskStore.KEY_LAST_LIST, null),
+                        onSheetUrlSaved = { url -> preferences.edit().putString(TaskStore.KEY_SHEET_URL, url).apply() },
+                        onAppsScriptUrlSaved = { url -> preferences.edit().putString(TaskStore.KEY_APPS_SCRIPT_URL, url).apply() },
                         onImportanceWeightSaved = { weight -> preferences.edit().putFloat("importance_weight", weight).apply() },
                         onTopNSaved = { count -> preferences.edit().putInt("top_n", count).apply() },
-                        onItemsSaved = { items -> preferences.edit().putString("todo_items", writeToDoItems(items)).apply() },
-                        onListsSaved = { lists -> preferences.edit().putString("known_lists", writeStringList(lists)).apply() },
-                        onLastListSaved = { list -> preferences.edit().putString("last_list", list).apply() }
+                        onLastListSaved = { list -> preferences.edit().putString(TaskStore.KEY_LAST_LIST, list).apply() }
                     )
                 }
             }
@@ -137,264 +124,148 @@ class MainActivity : ComponentActivity() {
 
 private enum class Screen { CAROUSEL, SETTINGS, QR_SCANNER }
 
+/**
+ * Settings' unsaved edits. Hoisted above SettingsScreen (rather than local `remember`s there) so a
+ * QR scan - which leaves Settings for the scanner screen and comes back - lands in the draft
+ * without losing anything else typed so far, and Cancel still backs out of the scan too.
+ */
+data class SettingsDraft(
+    val sheetUrl: String,
+    val appsScriptUrl: String,
+    // The slider's own value: -2 (full left, "Importance" biggest) .. +2 (full right, "Urgency"
+    // biggest), 0 centered = equal. Converted to/from the persisted importanceWeight float only at
+    // the edges (opening Settings, and Save) - see priorityTiltFromWeight/weightFromPriorityTilt.
+    val priorityTilt: Float,
+    val topN: Int
+)
+
 @Composable
 fun ActiveTasksApp(
     initialSheetUrl: String,
     initialAppsScriptUrl: String,
     initialImportanceWeight: Float,
     initialTopN: Int,
-    initialItems: List<ToDoItem>,
-    initialLists: List<String>,
     initialLastList: String?,
     onSheetUrlSaved: (String) -> Unit,
     onAppsScriptUrlSaved: (String) -> Unit,
     onImportanceWeightSaved: (Float) -> Unit,
     onTopNSaved: (Int) -> Unit,
-    onItemsSaved: (List<ToDoItem>) -> Unit,
-    onListsSaved: (List<String>) -> Unit,
     onLastListSaved: (String) -> Unit
 ) {
+    val context = LocalContext.current
     var screen by remember { mutableStateOf(if (initialSheetUrl.isBlank()) Screen.SETTINGS else Screen.CAROUSEL) }
-    // Hoisted above SettingsScreen (rather than a local `remember` there) so it survives the round
-    // trip through the QR scanner screen: SettingsScreen leaves composition entirely while
-    // Screen.QR_SCANNER is showing, and a local `remember` would reset back to its
-    // sheetUrl-is-blank-only default on return, collapsing the section the user just used to scan
-    // one of the two QR codes before they'd gotten to the other one or to Sync Lists. See
-    // SPEC.md/PUNCH_LIST.md "Fix the Google Sheet Connection section auto-collapsing".
+    // Hoisted above SettingsScreen so it survives the round trip through the QR scanner screen
+    // instead of collapsing back to its default in between. See SPEC.md/PUNCH_LIST.md "Fix the
+    // Google Sheet Connection section auto-collapsing".
     var openSettingsSection by remember { mutableStateOf(if (initialSheetUrl.isBlank()) "Google Sheet Connection" else "") }
     var sheetUrl by remember { mutableStateOf(initialSheetUrl) }
     var appsScriptUrl by remember { mutableStateOf(initialAppsScriptUrl) }
     var importanceWeight by remember { mutableStateOf(initialImportanceWeight) }
     var topN by remember { mutableStateOf(initialTopN) }
-    var items by remember { mutableStateOf(initialItems) }
-    var lists by remember { mutableStateOf(initialLists) }
     var lastList by remember { mutableStateOf(initialLastList) }
     var editingItemId by remember { mutableStateOf<String?>(null) }
-    var syncMessage by remember { mutableStateOf("") }
-    var actionError by remember { mutableStateOf("") }
-    var syncing by remember { mutableStateOf(false) }
-    var busy by remember { mutableStateOf(false) }
-    // Ids of items whose last completion write-back came back "row not found" rather than a
-    // network/server failure - the Sheet itself confirmed the row is gone (renamed away, moved to
-    // another tab, or deleted), so retrying the same call would just fail the same way again. Not
-    // persisted: it's just "should this card offer Remove locally right now," recomputed fresh each
-    // time the write is attempted. See completeForNow/fullyComplete and SPEC.md "Harden against
-    // user edits to the shared Sheet".
-    var orphanedItemIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    fun savedSettingsDraft() = SettingsDraft(sheetUrl, appsScriptUrl, priorityTiltFromWeight(importanceWeight), topN)
+    var settingsDraft by remember { mutableStateOf(savedSettingsDraft()) }
+    // True while Save Settings is waiting on the sync its connection change started.
+    var savingSync by remember { mutableStateOf(false) }
+    // Shown under the connection fields: the Save-triggered sync's outcome, or a note about a scan.
+    var settingsMessage by remember { mutableStateOf("") }
+    val items by TaskStore.items.collectAsState()
+    val lists by TaskStore.lists.collectAsState()
+    val stuckCount by TaskStore.stuckCount.collectAsState()
+    val lastSyncMessage by TaskStore.lastSyncMessage.collectAsState()
     val coroutineScope = rememberCoroutineScope()
     // A tab with nothing currently referred to it doesn't get a carousel page at all - only lists
-    // that actually have a live (non-done) item show up, so swiping only ever lands on something.
-    // Uses the union of known Sheet tabs and items' own list names (not just `lists`) so a tab
-    // rename/removal since an item was imported doesn't strand that item with no page anywhere in
-    // the UI to reach it from - see computeVisibleLists. `lists` itself (every known Sheet tab)
-    // still distinguishes "never synced" from "synced, nothing referred" for the empty-state
-    // message below.
+    // that actually have a live item show up, so swiping only ever lands on something. `lists`
+    // itself (every known Sheet tab) still distinguishes "never synced" from "synced, nothing
+    // referred" for the empty-state message.
     val visibleLists = computeVisibleLists(lists, items)
 
-    fun persistItems(newItems: List<ToDoItem>) {
-        items = newItems
-        onItemsSaved(newItems)
-    }
-
-    fun persistLists(newLists: List<String>) {
-        lists = newLists
-        onListsSaved(newLists)
-    }
-
-    // A sync already in flight was fetched before whatever change just happened, so its result is
-    // stale: [resyncPending] queues one more sync behind it, and [removedDuringSync] keeps the
-    // stale result from re-adding an item completed while it was running.
-    var resyncPending by remember { mutableStateOf(false) }
-    val removedDuringSync = remember { mutableSetOf<String>() }
-
-    fun runSync() {
-        if (sheetUrl.isBlank()) return
-        if (appsScriptUrl.isBlank()) {
-            syncMessage = "Set the Apps Script Web App URL above to sync referred items."
-            return
-        }
-        if (syncing) {
-            resyncPending = true
-            return
-        }
-        syncing = true
-        removedDuringSync.clear()
-        coroutineScope.launch {
-            val tabs = withContext(Dispatchers.IO) { fetchSheetTabs(sheetUrl) }
-            if (tabs.isEmpty()) {
-                syncing = false
-                resyncPending = false
-                syncMessage = "Couldn't read any tabs from this Sheet. Check the URL and that " +
-                    "sharing is \"Anyone with the link can view\"."
-                return@launch
-            }
-            val prioritiesByTab = withContext(Dispatchers.IO) {
-                fetchAllPriorities(appsScriptUrl)
-                    .groupBy { it.category }
-                    .mapValues { (_, rows) ->
-                        // Keyed by taskId (preferred) when the row has one, else by description
-                        // text - see toDoItemsFromReferredRows, which looks up the same way.
-                        rows.associate { (it.taskId?.let { id -> "id:$id" } ?: it.description) to it.priority }
-                    }
-            }
-            val imported = withContext(Dispatchers.IO) {
-                tabs.flatMap { tab ->
-                    toDoItemsFromReferredRows(tab.csv, tab.tabName, prioritiesByTab[tab.tabName].orEmpty())
-                }
-            }
-            syncing = false
-            persistItems(mergeImportedToDoItems(imported.filterNot { it.id in removedDuringSync }, items))
-            persistLists(tabs.map { it.tabName })
-            // A tab the Apps Script says has referred rows (getPriorities returned something for
-            // that category) but that produced zero matched items is a real anomaly - unlike a
-            // tab with nothing referred at all, which is normal under gated ingestion and stays
-            // silent here. Surfaces a mismatch (Sheet-side row edited/renamed since referral, a
-            // missing/misnamed Description header, an unchecked column A, etc.) instead of the
-            // tab just silently never getting a carousel page with no clue why.
-            val mismatchedTabs = tabs.map { it.tabName }
-                .filter { tabName -> prioritiesByTab[tabName].orEmpty().isNotEmpty() && imported.none { it.list == tabName } }
-            syncMessage = if (mismatchedTabs.isEmpty()) {
-                "Synced ${tabs.size} list(s)."
-            } else {
-                "Synced ${tabs.size} list(s). Referred rows didn't match any Sheet row in: " +
-                    "${mismatchedTabs.joinToString(", ")}."
-            }
-            if (resyncPending) {
-                resyncPending = false
-                runSync()
-            }
-        }
-    }
-
-    // Sync on every foreground entry - a cold launch, or coming back from MicroTasking after a
-    // referral - so this list never waits on a manual "Sync Lists" to catch up.
+    // Sync on every foreground entry - a cold launch, returning from MicroTasking or any other
+    // app, unlocking the screen - showing the saved copy until the read corrects it.
     val lifecycleOwner = LocalLifecycleOwner.current
-    val latestRunSync by rememberUpdatedState(::runSync)
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_START) latestRunSync()
+            if (event == Lifecycle.Event.ON_START) TaskStore.requestSync(context)
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // A write-back that comes back RowNotFound means the Sheet itself confirmed the row is gone,
-    // not that the call failed - flag the item as orphaned (offers "Remove locally" on its card)
-    // instead of leaving it retrying forever against a target that no longer exists.
-    fun handleWriteOutcome(item: ToDoItem, outcome: SheetWriteOutcome, notFoundMessage: String, failureMessage: String) {
-        busy = false
-        when (outcome) {
-            SheetWriteOutcome.Success -> {
-                removedDuringSync += item.id
-                persistItems(items.filterNot { it.id == item.id })
-                runSync()
-            }
-            SheetWriteOutcome.RowNotFound -> {
-                orphanedItemIds = orphanedItemIds + item.id
-                actionError = notFoundMessage
-            }
-            // The detail is appended (not the whole message) so a genuine network error still
-            // reads as a network error, but the actual cause - an HTTP status, an unrecognized
-            // Sheet error, a thrown exception's message - is visible instead of guessing blind.
-            // See PUNCH_LIST.md item 1: the referral round trip's on-device verification has
-            // surfaced write-back failures this detail was needed to diagnose.
-            is SheetWriteOutcome.Failure -> actionError = outcome.message?.let { "$failureMessage ($it)" } ?: failureMessage
-        }
+    fun openSettings() {
+        settingsDraft = savedSettingsDraft()
+        settingsMessage = ""
+        screen = Screen.SETTINGS
     }
 
-    fun completeForNow(item: ToDoItem) {
-        busy = true
-        actionError = ""
+    // Saves everything; a changed Sheet or Web App URL also resyncs (a different Sheet first
+    // discards everything local to the old one), staying on Settings with the error if that fails.
+    fun saveSettings(draft: SettingsDraft) {
+        val newSheetUrl = draft.sheetUrl.trim()
+        val newAppsScriptUrl = draft.appsScriptUrl.trim()
+        val sheetChanged = newSheetUrl != sheetUrl
+        val connectionChanged = sheetChanged || newAppsScriptUrl != appsScriptUrl
+        importanceWeight = weightFromPriorityTilt(draft.priorityTilt)
+        onImportanceWeightSaved(importanceWeight)
+        topN = draft.topN
+        onTopNSaved(topN)
+        sheetUrl = newSheetUrl
+        onSheetUrlSaved(newSheetUrl)
+        appsScriptUrl = newAppsScriptUrl
+        onAppsScriptUrlSaved(newAppsScriptUrl)
+        if (!connectionChanged) {
+            screen = Screen.CAROUSEL
+            return
+        }
+        savingSync = true
+        settingsMessage = ""
         coroutineScope.launch {
-            val outcome = withContext(Dispatchers.IO) { clearSheetPriority(appsScriptUrl, item.list, item.description, item.taskId) }
-            handleWriteOutcome(
-                item,
-                outcome,
-                notFoundMessage = "This item's row is no longer in your Sheet - it may have been renamed, moved, or deleted. Remove it locally below, or sync again first if you expect it to still be there.",
-                failureMessage = "Couldn't reach the Sheet to clear this item's priority - check your connection and try again."
-            )
+            if (sheetChanged) {
+                TaskStore.switchSheet(context)
+                lastList = null
+            }
+            val result = TaskStore.syncAndWait(context)
+            savingSync = false
+            settingsMessage = result.message
+            if (result is SyncResult.Success) screen = Screen.CAROUSEL
         }
-    }
-
-    fun fullyComplete(item: ToDoItem) {
-        busy = true
-        actionError = ""
-        coroutineScope.launch {
-            val outcome = withContext(Dispatchers.IO) { deleteSheetRow(appsScriptUrl, item.list, item.description, item.taskId) }
-            handleWriteOutcome(
-                item,
-                outcome,
-                notFoundMessage = "This item's row is no longer in your Sheet - it may have been renamed, moved, or deleted. Remove it locally below, or sync again first if you expect it to still be there.",
-                failureMessage = "Couldn't reach the Sheet to remove this row - check your connection and try again."
-            )
-        }
-    }
-
-    // The Sheet row is already confirmed gone (RowNotFound) by the time this is offered, so this
-    // is local-only bookkeeping - no further write-back call to make.
-    fun removeLocally(item: ToDoItem) {
-        orphanedItemIds = orphanedItemIds - item.id
-        persistItems(items.filterNot { it.id == item.id })
     }
 
     when (screen) {
         Screen.QR_SCANNER -> QrScannerScreen(
             onResult = { scanned ->
                 screen = Screen.SETTINGS
-                // The onboarding page makes separate Sheet-URL and Web App URL QR codes (older
-                // ones carried both, newline-separated). Each line is classified by what it looks
-                // like, and a setting the scan didn't carry is left as it was.
+                // Fills the draft only - nothing is saved or synced until Save Settings, so Cancel
+                // still backs out. Each scanned line is classified by what it looks like, and a
+                // field the scan didn't carry is left as it was.
                 val payload = parseSetupQr(scanned)
-                payload.webAppUrl?.let {
-                    appsScriptUrl = it
-                    onAppsScriptUrlSaved(it)
-                }
-                val scannedSheetUrl = payload.sheetUrl
-                if (scannedSheetUrl != null) {
-                    sheetUrl = scannedSheetUrl
-                    onSheetUrlSaved(scannedSheetUrl)
-                    runSync()
-                } else if (payload.webAppUrl != null) {
-                    syncMessage = "Web App URL saved."
+                settingsDraft = settingsDraft.copy(
+                    sheetUrl = payload.sheetUrl ?: settingsDraft.sheetUrl,
+                    appsScriptUrl = payload.webAppUrl ?: settingsDraft.appsScriptUrl
+                )
+                settingsMessage = if (payload.sheetUrl == null && payload.webAppUrl == null) {
+                    "That QR code was empty - nothing was changed."
                 } else {
-                    syncMessage = "That QR code was empty - nothing was changed."
+                    "Scanned. Press Save Settings to connect."
                 }
             },
             onCancel = { screen = Screen.SETTINGS }
         )
         Screen.SETTINGS -> SettingsScreen(
-            initialSheetUrl = sheetUrl,
-            initialAppsScriptUrl = appsScriptUrl,
-            initialImportanceWeight = importanceWeight,
-            initialTopN = topN,
+            draft = settingsDraft,
+            onDraftChange = { settingsDraft = it },
             openSection = openSettingsSection,
             onOpenSectionChange = { openSettingsSection = it },
             onScanQr = { screen = Screen.QR_SCANNER },
-            // Sync always uses (and commits) whatever's currently typed, even if "Save Settings"
-            // hasn't been pressed yet - syncing without a saved URL to sync again next launch
-            // would be a trap, and this matches "Sync Lists" always having saved immediately.
-            onSync = { draftSheetUrl, draftAppsScriptUrl ->
-                sheetUrl = draftSheetUrl
-                onSheetUrlSaved(draftSheetUrl)
-                appsScriptUrl = draftAppsScriptUrl
-                onAppsScriptUrlSaved(draftAppsScriptUrl)
-                runSync()
+            saving = savingSync,
+            statusMessage = when {
+                savingSync -> "Syncing…"
+                settingsMessage.isNotBlank() -> settingsMessage
+                else -> lastSyncMessage
             },
-            syncing = syncing,
-            syncMessage = syncMessage,
             canGoBack = lists.isNotEmpty(),
             onCancel = { screen = Screen.CAROUSEL },
-            onSave = { newSheetUrl, newAppsScriptUrl, newImportanceWeight, newTopN ->
-                sheetUrl = newSheetUrl
-                onSheetUrlSaved(newSheetUrl)
-                appsScriptUrl = newAppsScriptUrl
-                onAppsScriptUrlSaved(newAppsScriptUrl)
-                importanceWeight = newImportanceWeight
-                onImportanceWeightSaved(newImportanceWeight)
-                topN = newTopN
-                onTopNSaved(newTopN)
-                screen = Screen.CAROUSEL
-            }
+            onSave = { saveSettings(it) }
         )
         Screen.CAROUSEL -> CarouselScreen(
             hasSyncedLists = lists.isNotEmpty(),
@@ -403,31 +274,36 @@ fun ActiveTasksApp(
             importanceWeight = importanceWeight,
             topN = topN,
             initialList = initialListName(visibleLists, items, importanceWeight, lastList),
-            busy = busy,
-            actionError = actionError,
-            orphanedItemIds = orphanedItemIds,
+            waitingChanges = stuckCount,
             onListOpened = { list ->
                 lastList = list
                 onLastListSaved(list)
             },
-            onOpenSettings = { screen = Screen.SETTINGS },
+            onOpenSettings = { openSettings() },
             onAdjustItem = { editingItemId = it },
-            onCompleteForNow = { item -> completeForNow(item) },
-            onFullyComplete = { item -> fullyComplete(item) },
-            onRemoveLocally = { item -> removeLocally(item) }
+            onCompleteForNow = { item -> TaskStore.completeItem(context, item, fully = false) },
+            onFullyComplete = { item -> TaskStore.completeItem(context, item, fully = true) }
         )
     }
 
     val editingItem = items.find { it.id == editingItemId }
     if (editingItem != null) {
+        // The priority as the dialog opened, so closing it only queues a Sheet write if the
+        // matrix actually moved - not one per drag event.
+        val openedPriority = remember(editingItem.id) { editingItem.importance to editingItem.urgency }
         ItemDetailDialog(
             item = editingItem,
-            onDismiss = { editingItemId = null },
+            onDismiss = {
+                if ((editingItem.importance to editingItem.urgency) != openedPriority) {
+                    TaskStore.commitPriority(context, editingItem.id)
+                }
+                editingItemId = null
+            },
             onPriorityChange = { importance, urgency ->
-                persistItems(items.map { if (it.id == editingItem.id) it.copy(importance = importance, urgency = urgency) else it })
+                TaskStore.updateItemLocally(context, editingItem.id) { it.copy(importance = importance, urgency = urgency) }
             },
             onProgressChange = { progress ->
-                persistItems(items.map { if (it.id == editingItem.id) it.copy(progress = progress) else it })
+                TaskStore.updateItemLocally(context, editingItem.id) { it.copy(progress = progress) }
             }
         )
     }
@@ -451,31 +327,20 @@ private fun priorityTiltFontSize(step: Int): Int = 22 - step.coerceIn(-2, 2) * 4
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    initialSheetUrl: String,
-    initialAppsScriptUrl: String,
-    initialImportanceWeight: Float,
-    initialTopN: Int,
+    draft: SettingsDraft,
+    onDraftChange: (SettingsDraft) -> Unit,
     openSection: String,
     onOpenSectionChange: (String) -> Unit,
     onScanQr: () -> Unit,
-    onSync: (sheetUrl: String, appsScriptUrl: String) -> Unit,
-    syncing: Boolean,
-    syncMessage: String,
+    saving: Boolean,
+    statusMessage: String,
     canGoBack: Boolean,
     onCancel: () -> Unit,
-    onSave: (sheetUrl: String, appsScriptUrl: String, importanceWeight: Float, topN: Int) -> Unit
+    onSave: (SettingsDraft) -> Unit
 ) {
-    // Draft state: nothing here reaches the caller until Save Settings is pressed (Cancel just
-    // discards it), except Sync Lists, which always commits the two URL fields it uses - see the
-    // call site's onSync. Scanning a QR code bypasses this screen's draft entirely (it saves
-    // immediately and this screen remounts with the new values as its initial state).
-    var sheetUrl by remember { mutableStateOf(initialSheetUrl) }
-    var appsScriptUrl by remember { mutableStateOf(initialAppsScriptUrl) }
-    // The slider's own value: -2 (full left, "Importance" biggest) .. +2 (full right, "Urgency"
-    // biggest), 0 centered = equal. Converted to/from the persisted importanceWeight float only at
-    // the edges (initial snap-in, and Save) - see priorityTiltFromWeight/weightFromPriorityTilt.
-    var priorityTilt by remember { mutableStateOf(priorityTiltFromWeight(initialImportanceWeight)) }
-    var topN by remember { mutableStateOf(initialTopN) }
+    // Every field edits [draft], owned by the caller: nothing is saved until Save Settings (Cancel
+    // just discards it), and a QR scan fills the same draft. Saving with changed connection
+    // details syncs - there is no separate Sync button (SPEC.md "Synchronization").
     // Accordion: at most one section open at a time. "" means all collapsed. Same pattern as
     // MicroTasking's SettingsScreen - keep the two in sync stylistically. Hoisted up to
     // ActiveTasksApp (not a local `remember` here) so it survives the round trip through the QR
@@ -531,7 +396,7 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             // No numbers, no formula - which word is bigger IS the setting.
-                            val tiltStep = priorityTilt.roundToInt().coerceIn(-2, 2)
+                            val tiltStep = draft.priorityTilt.roundToInt().coerceIn(-2, 2)
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -541,16 +406,16 @@ fun SettingsScreen(
                                 Text("Urgency", fontSize = priorityTiltFontSize(-tiltStep).sp)
                             }
                             Slider(
-                                value = priorityTilt,
-                                onValueChange = { priorityTilt = it },
+                                value = draft.priorityTilt,
+                                onValueChange = { onDraftChange(draft.copy(priorityTilt = it)) },
                                 valueRange = -2f..2f,
                                 steps = 3
                             )
-                            Text("Items per list: $topN", style = MaterialTheme.typography.labelLarge)
+                            Text("Items per list: ${draft.topN}", style = MaterialTheme.typography.labelLarge)
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                OutlinedButton(onClick = { if (topN > 1) topN -= 1 }) { Text("−") }
-                                Text("$topN", modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleMedium)
-                                OutlinedButton(onClick = { if (topN < 10) topN += 1 }) { Text("+") }
+                                OutlinedButton(onClick = { if (draft.topN > 1) onDraftChange(draft.copy(topN = draft.topN - 1)) }) { Text("−") }
+                                Text("${draft.topN}", modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleMedium)
+                                OutlinedButton(onClick = { if (draft.topN < 10) onDraftChange(draft.copy(topN = draft.topN + 1)) }) { Text("+") }
                             }
                         }
                     }
@@ -570,8 +435,8 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             OutlinedTextField(
-                                value = sheetUrl,
-                                onValueChange = { sheetUrl = it },
+                                value = draft.sheetUrl,
+                                onValueChange = { onDraftChange(draft.copy(sheetUrl = it)) },
                                 modifier = Modifier.fillMaxWidth(),
                                 label = { Text("Google Sheet URL") }
                             )
@@ -589,8 +454,8 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             OutlinedTextField(
-                                value = appsScriptUrl,
-                                onValueChange = { appsScriptUrl = it },
+                                value = draft.appsScriptUrl,
+                                onValueChange = { onDraftChange(draft.copy(appsScriptUrl = it)) },
                                 modifier = Modifier.fillMaxWidth(),
                                 label = { Text("Apps Script Web App URL") },
                                 placeholder = { Text("https://script.google.com/macros/s/…/exec") }
@@ -602,16 +467,9 @@ fun SettingsScreen(
                                 Text(" Scan Web App QR Code")
                             }
 
-                            Button(
-                                onClick = { onSync(sheetUrl.trim(), appsScriptUrl.trim()) },
-                                enabled = sheetUrl.isNotBlank() && !syncing,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(if (syncing) "Syncing…" else "Sync Lists")
-                            }
-                            if (syncMessage.isNotBlank()) {
+                            if (statusMessage.isNotBlank()) {
                                 Text(
-                                    syncMessage,
+                                    statusMessage,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.primary
                                 )
@@ -650,14 +508,15 @@ fun SettingsScreen(
                     .navigationBarsPadding(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedButton(modifier = Modifier.weight(1f), enabled = canGoBack, onClick = onCancel) {
+                OutlinedButton(modifier = Modifier.weight(1f), enabled = canGoBack && !saving, onClick = onCancel) {
                     Text("Cancel")
                 }
                 Button(
                     modifier = Modifier.weight(1f),
-                    onClick = { onSave(sheetUrl.trim(), appsScriptUrl.trim(), weightFromPriorityTilt(priorityTilt), topN) }
+                    enabled = !saving,
+                    onClick = { onSave(draft) }
                 ) {
-                    Text("Save Settings")
+                    Text(if (saving) "Syncing…" else "Save Settings")
                 }
             }
         }
@@ -673,15 +532,12 @@ fun CarouselScreen(
     importanceWeight: Float,
     topN: Int,
     initialList: String?,
-    busy: Boolean,
-    actionError: String,
-    orphanedItemIds: Set<String>,
+    waitingChanges: Int,
     onListOpened: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onAdjustItem: (String) -> Unit,
     onCompleteForNow: (ToDoItem) -> Unit,
-    onFullyComplete: (ToDoItem) -> Unit,
-    onRemoveLocally: (ToDoItem) -> Unit
+    onFullyComplete: (ToDoItem) -> Unit
 ) {
     val pagerState = rememberPagerState(
         initialPage = visibleLists.indexOf(initialList).coerceAtLeast(0),
@@ -717,9 +573,10 @@ fun CarouselScreen(
             ) {
                 Text(
                     if (hasSyncedLists) "No tasks referred yet."
-                    else "No lists yet. Open Settings and sync your Google Sheet to get started.",
+                    else "No lists yet. Open Settings and connect your Google Sheet to get started.",
                     style = MaterialTheme.typography.bodyMedium
                 )
+                WaitingChangesNote(waitingChanges, Modifier.padding(top = 8.dp))
             }
             return@Scaffold
         }
@@ -750,19 +607,12 @@ fun CarouselScreen(
                     }
                 }
             }
-            if (actionError.isNotBlank()) {
-                Text(
-                    actionError,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
-                )
-            }
+            WaitingChangesNote(waitingChanges, Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
             HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
                 val listName = visibleLists[page]
                 // distinctBy is cheap insurance against a duplicate id (two Sheet rows with
                 // identical description text and no Task ID yet) hard-crashing this LazyColumn's
-                // key-by-id below - see mergeImportedToDoItems, which is the primary place this is
+                // key-by-id below - see reconcileWithSheet, which is the primary place this is
                 // supposed to already be prevented.
                 val topItems = sortedForDisplay(items.filter { it.list == listName && !it.done }.distinctBy { it.id }, importanceWeight).take(topN)
                 if (topItems.isEmpty()) {
@@ -784,12 +634,9 @@ fun CarouselScreen(
                         items(topItems, key = { it.id }) { toDoItem ->
                             ToDoItemRow(
                                 item = toDoItem,
-                                busy = busy,
-                                orphaned = toDoItem.id in orphanedItemIds,
                                 onAdjust = { onAdjustItem(toDoItem.id) },
                                 onCompleteForNow = { onCompleteForNow(toDoItem) },
-                                onFullyComplete = { onFullyComplete(toDoItem) },
-                                onRemoveLocally = { onRemoveLocally(toDoItem) }
+                                onFullyComplete = { onFullyComplete(toDoItem) }
                             )
                         }
                     }
@@ -797,6 +644,21 @@ fun CarouselScreen(
             }
         }
     }
+}
+
+/**
+ * "N changes waiting to reach your Sheet": shown only while the pending-changes queue still holds
+ * something after a failed send (offline, Web App down) - otherwise sync stays invisible.
+ */
+@Composable
+private fun WaitingChangesNote(count: Int, modifier: Modifier = Modifier) {
+    if (count <= 0) return
+    Text(
+        if (count == 1) "1 change waiting to reach your Sheet" else "$count changes waiting to reach your Sheet",
+        modifier = modifier,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 private fun quadrantColor(quadrant: Quadrant, colorScheme: androidx.compose.material3.ColorScheme): Color = when (quadrant) {
@@ -810,12 +672,9 @@ private fun quadrantColor(quadrant: Quadrant, colorScheme: androidx.compose.mate
 @Composable
 fun ToDoItemRow(
     item: ToDoItem,
-    busy: Boolean,
-    orphaned: Boolean,
     onAdjust: () -> Unit,
     onCompleteForNow: () -> Unit,
-    onFullyComplete: () -> Unit,
-    onRemoveLocally: () -> Unit
+    onFullyComplete: () -> Unit
 ) {
     val context = LocalContext.current
     OutlinedCard(modifier = Modifier.fillMaxWidth()) {
@@ -841,31 +700,17 @@ fun ToDoItemRow(
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                OutlinedButton(onClick = onAdjust, enabled = !busy) {
+                OutlinedButton(onClick = onAdjust) {
                     Text("Priority & progress")
                 }
             }
-            // Once a write-back has confirmed this row is gone from the Sheet, offering Complete
-            // (for now)/Fully complete again would just repeat the same "not found" outcome - swap
-            // them for a one-way local removal instead (SPEC.md "Harden against user edits").
-            if (orphaned) {
-                Text(
-                    "This item's row is no longer in your Sheet.",
-                    modifier = Modifier.padding(top = 8.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
-                )
-                OutlinedButton(onClick = onRemoveLocally, enabled = !busy, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                    Text("Remove locally")
+            // Both take effect at once; the Sheet write is queued and retried until it lands.
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onCompleteForNow, modifier = Modifier.weight(1f)) {
+                    Text("Complete (for now)")
                 }
-            } else {
-                Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onCompleteForNow, enabled = !busy, modifier = Modifier.weight(1f)) {
-                        Text("Complete (for now)")
-                    }
-                    Button(onClick = onFullyComplete, enabled = !busy, modifier = Modifier.weight(1f)) {
-                        Text("Fully complete")
-                    }
+                Button(onClick = onFullyComplete, modifier = Modifier.weight(1f)) {
+                    Text("Fully complete")
                 }
             }
         }
@@ -957,7 +802,10 @@ private fun Modifier.pointerInputMatrix(onOffset: (x: Float, y: Float) -> Unit):
         }
     }
 
-/** Re-triage (priority matrix) and progress for a referred item; local-only, never written to the Sheet. */
+/**
+ * Re-triage (priority matrix) and progress for a referred item. The priority is written back to
+ * the Sheet when the dialog closes (queued, see [TaskStore.commitPriority]); progress stays local.
+ */
 @Composable
 fun ItemDetailDialog(
     item: ToDoItem,

@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
+// Updated 2026-09-24, after version v0.2.0-24 main 2026-09-24
 package com.activetasks.app
 
 import org.json.JSONArray
@@ -168,11 +169,7 @@ fun toDoItemsFromReferredRows(
     .mapNotNull { row ->
         val priority = row.taskId?.let { priorities["id:$it"] } ?: priorities[row.description] ?: return@mapNotNull null
         ToDoItem(
-            // Deterministic so a re-sync recognizes the same row instead of duplicating it.
-            // Preferring taskId (when the row has one) makes a description rename in the sheet
-            // survive as the same item, same convention MicroTasking's task-pool import now uses;
-            // without one, editing the description still reads as a new item as before.
-            id = row.taskId?.let { "sheet-$it" } ?: "sheet-$listName-${row.description}",
+            id = toDoItemId(row.taskId, listName, row.description),
             description = row.description,
             list = listName,
             link = row.link,
@@ -183,50 +180,170 @@ fun toDoItemsFromReferredRows(
     }
 
 /**
- * Folds freshly-imported sheet items into the existing set. Only adds items not already present
- * (matched by id) - never removes or overwrites an existing item just because its sheet row
- * disappeared or the re-import ran again. An item you're already treating as a live to-do
- * (progress, done state) is yours until you deal with it in the app; the sheet is a source of new
- * items, not a mirror to sync down to. See SPEC.md.
+ * An item's id, deterministic so a re-sync recognizes the same row instead of duplicating it.
+ * Preferring taskId (when the row has one) makes a description rename in the sheet survive as the
+ * same item, same convention MicroTasking's task-pool import uses; without one, editing the
+ * description reads as a new item.
  */
-fun mergeImportedToDoItems(imported: List<ToDoItem>, existing: List<ToDoItem>): List<ToDoItem> {
-    val existingIds = existing.mapTo(mutableSetOf()) { it.id }
+fun toDoItemId(taskId: String?, listName: String, description: String): String =
+    taskId?.let { "sheet-$it" } ?: "sheet-$listName-$description"
 
-    // An item stored before its Sheet row had a Task ID (or synced against a script that predates
-    // the column) keeps its legacy `sheet-$list-$description` id forever under a plain "add by id"
-    // rule: once that row gains a Task ID, `imported` carries the very same task fresh under a new
-    // `sheet-$taskId` id, and the old rule would show two cards for one real task starting at 0%
-    // progress - not a hypothetical, this is exactly what the taskId rollout itself triggered for
-    // every already-referred item on a device that synced before and after the Sheet's Task ID
-    // column was populated. Fold any no-taskId existing item into its now-taskId-bearing
-    // counterpart in place (progress/done carried over) instead of letting it duplicate.
-    val importedByListDescription = imported.filter { it.taskId != null }.associateBy { it.list to it.description }
-    val migratedIds = mutableSetOf<String>()
-    val migrated = existing.map { existingItem ->
-        if (existingItem.taskId != null) return@map existingItem
-        val match = importedByListDescription[existingItem.list to existingItem.description] ?: return@map existingItem
-        migratedIds += match.id
-        existingItem.copy(id = match.id, taskId = match.taskId, importance = match.importance, urgency = match.urgency)
+/** A Sheet write waiting to be sent - see SPEC.md "Synchronization" > "Pending-changes queue". */
+enum class PendingOp(val wireName: String) {
+    CLEAR_PRIORITY("clearPriority"),
+    DELETE_ROW("deleteRow"),
+    SET_PRIORITY("setPriority")
+}
+
+data class PendingChange(
+    val op: PendingOp,
+    val itemId: String,
+    val category: String,
+    val description: String,
+    val taskId: String?,
+    val importance: Float = 0f,
+    val urgency: Float = 0f,
+    val queuedAtEpochMs: Long = System.currentTimeMillis()
+) {
+    val isCompletion: Boolean get() = op != PendingOp.SET_PRIORITY
+}
+
+/**
+ * Adds [change] to [queue]. A newer priority change for an item replaces an older unsent one; a
+ * completion drops any unsent priority change for its item (the row is going away regardless); a
+ * priority change or second completion for an item that already has a completion queued is
+ * dropped, since that item has already left the list.
+ */
+fun enqueuePendingChange(queue: List<PendingChange>, change: PendingChange): List<PendingChange> {
+    if (queue.any { it.itemId == change.itemId && it.isCompletion }) return queue
+    return queue.filterNot { it.itemId == change.itemId && it.op == PendingOp.SET_PRIORITY } + change
+}
+
+private fun pendingChangeToJson(change: PendingChange): JSONObject = JSONObject().apply {
+    put("op", change.op.name)
+    put("itemId", change.itemId)
+    put("category", change.category)
+    put("description", change.description)
+    put("taskId", change.taskId ?: JSONObject.NULL)
+    put("importance", change.importance.toDouble())
+    put("urgency", change.urgency.toDouble())
+    put("queuedAtEpochMs", change.queuedAtEpochMs)
+}
+
+fun readPendingChanges(json: String): List<PendingChange> = runCatching {
+    val values = JSONArray(json)
+    List(values.length()) { index ->
+        val entry = values.getJSONObject(index)
+        PendingChange(
+            op = PendingOp.valueOf(entry.getString("op")),
+            itemId = entry.getString("itemId"),
+            category = entry.getString("category"),
+            description = entry.getString("description"),
+            taskId = entry.optNullableString("taskId"),
+            importance = entry.optDouble("importance", 0.0).toFloat(),
+            urgency = entry.optDouble("urgency", 0.0).toFloat(),
+            queuedAtEpochMs = entry.optLong("queuedAtEpochMs", 0L)
+        )
     }
+}.getOrDefault(emptyList())
 
-    // distinctBy (keeping the first/earlier-added copy) also self-heals a device already affected
-    // by the bug above: the migrated legacy item (real progress) ends up sharing an id with a
-    // taskId-based duplicate a prior sync already added (still at 0%) - the legacy one was added
-    // earlier so it sorts first, and its progress wins.
-    //
-    // Separately, distinctBy guards against two sheet rows colliding on the same id within one
-    // sync batch - e.g. identical description text in the same tab when neither row has a Task ID
-    // yet (SPEC.md "Harden against user edits"). LazyColumn hard-crashes on a duplicate key, so
-    // this is cheap insurance against that crash too, not just tidiness; it can't tell the two rows
-    // apart, so one is silently dropped until the sheet gets surrogate ids for both.
-    val newItems = imported.filter { it.id !in existingIds && it.id !in migratedIds }.distinctBy { it.id }
-    return (migrated + newItems).distinctBy { it.id }
+fun writePendingChanges(changes: List<PendingChange>): String = JSONArray().apply {
+    changes.forEach { put(pendingChangeToJson(it)) }
+}.toString()
+
+/**
+ * Rebuilds the item set from a complete, successful Sheet read - the Sheet is definitive (SPEC.md
+ * "Synchronization"). Every referred row in [imported] becomes an item; a local item with no
+ * referred row is dropped. An existing item keeps only its local fields (progress, addedAt) and
+ * takes everything else, priority included, from the Sheet. [pending] is laid on top: an item
+ * with a queued completion stays gone even though the Sheet still shows it, and one with a queued
+ * priority change keeps its new local priority until that write lands. [keepIds] are existing
+ * items to keep even if the read doesn't have them - ones a cross-app message added after the read
+ * started, which the read can't have seen yet.
+ */
+fun reconcileWithSheet(
+    imported: List<ToDoItem>,
+    existing: List<ToDoItem>,
+    pending: List<PendingChange>,
+    keepIds: Set<String> = emptySet()
+): List<ToDoItem> {
+    // An item stored before its Sheet row had a Task ID keeps its legacy `sheet-$list-$description`
+    // id; once the row gains a Task ID, `imported` carries the same task under `sheet-$taskId`.
+    // Resolve such legacy ids onto the new one so the local progress carries over instead of the
+    // task reading as removed-plus-new. First existing item per resolved id wins (the older one,
+    // which is the one carrying real progress on a device the taskId rollout already duplicated).
+    val importedByListDescription = imported.filter { it.taskId != null }.associateBy { it.list to it.description }
+    fun resolvedId(item: ToDoItem): String =
+        if (item.taskId != null) item.id
+        else importedByListDescription[item.list to item.description]?.id ?: item.id
+    val existingByResolvedId = LinkedHashMap<String, ToDoItem>()
+    existing.forEach { existingByResolvedId.putIfAbsent(resolvedId(it), it) }
+    val legacyToResolved = existing.associate { it.id to resolvedId(it) }
+    fun resolvedPendingId(change: PendingChange): String = legacyToResolved[change.itemId] ?: change.itemId
+
+    val pendingCompletionIds = pending.filter { it.isCompletion }.mapTo(mutableSetOf()) { resolvedPendingId(it) }
+    val pendingPriorities = pending.filter { it.op == PendingOp.SET_PRIORITY }.associateBy { resolvedPendingId(it) }
+
+    // distinctBy guards against two sheet rows colliding on the same id - identical description
+    // text in the same tab when neither row has a Task ID yet. LazyColumn hard-crashes on a
+    // duplicate key; since the two rows can't be told apart, one is dropped until both get ids.
+    val rebuilt = imported.distinctBy { it.id }
+        .filter { it.id !in pendingCompletionIds }
+        .map { sheetItem ->
+            val local = existingByResolvedId[sheetItem.id]
+            val merged = if (local == null) sheetItem
+            else sheetItem.copy(progress = local.progress, addedAtEpochMs = local.addedAtEpochMs)
+            pendingPriorities[sheetItem.id]?.let { merged.copy(importance = it.importance, urgency = it.urgency) } ?: merged
+        }
+    val rebuiltIds = rebuilt.mapTo(mutableSetOf()) { it.id }
+    val kept = existing.filter { it.id in keepIds && it.id !in rebuiltIds && it.id !in pendingCompletionIds }
+    return (rebuilt + kept).distinctBy { it.id }
+}
+
+/**
+ * Applies one cross-app message to the item set (SPEC.md "Synchronization" > "Messages between
+ * the two apps"). The message is only ever sent after the Sheet write succeeded, so it carries
+ * Sheet truth: a referral adds the item (or refreshes it if a sync already brought it in), a
+ * completion removes it. Receiving the same message twice is harmless. Matching is by taskId when
+ * both sides have one (different taskIds are different tasks, no fallback), else by list +
+ * description - same rule as MicroTasking's receiver. [TaskStore.applyIncomingEvent] separately
+ * drops a referral older than this device's own completion of the same item.
+ */
+fun applyTaskEvent(items: List<ToDoItem>, event: TaskEvent): List<ToDoItem> {
+    fun matches(item: ToDoItem): Boolean =
+        if (event.taskId != null && item.taskId != null) item.taskId == event.taskId
+        else item.list == event.category && item.description == event.description
+    return when (event.event) {
+        TaskEvent.REFERRED -> {
+            val existing = items.find(::matches)
+            if (existing != null) {
+                items.map {
+                    if (it.id == existing.id) it.copy(
+                        description = event.description, list = event.category, link = event.link,
+                        importance = event.importance, urgency = event.urgency
+                    ) else it
+                }
+            } else {
+                items + ToDoItem(
+                    id = toDoItemId(event.taskId, event.category, event.description),
+                    description = event.description,
+                    list = event.category,
+                    link = event.link,
+                    taskId = event.taskId,
+                    importance = event.importance,
+                    urgency = event.urgency
+                )
+            }
+        }
+        TaskEvent.COMPLETED_FOR_NOW, TaskEvent.FULLY_COMPLETED -> items.filterNot(::matches)
+        else -> items
+    }
 }
 
 /**
  * Bumped whenever previously-stored items can no longer be trusted as "referred by MicroTasking".
  * Version 2: v1 stored every checked sheet row (the pre-referral scaffold) plus ad-hoc `local-`
- * items, none of which were referred - and [mergeImportedToDoItems] never removes anything, so
+ * items, none of which were referred - and the sync of that era never removed anything, so
  * they'd otherwise linger in the lists forever.
  */
 const val ITEMS_SCHEMA_VERSION = 2
@@ -238,7 +355,7 @@ const val ITEMS_SCHEMA_VERSION = 2
  */
 fun itemsToLoad(storedSchemaVersion: Int, stored: List<ToDoItem>): List<ToDoItem> =
     if (storedSchemaVersion < ITEMS_SCHEMA_VERSION) emptyList()
-    // distinctBy is defensive: a duplicate id shouldn't be persisted anymore (mergeImportedToDoItems
+    // distinctBy is defensive: a duplicate id shouldn't be persisted anymore (reconcileWithSheet
     // now dedupes on the way in), but this stops one already saved to a device before that fix from
     // crashing the carousel's LazyColumn forever.
     else stored.filter { it.id.startsWith("sheet-") }.distinctBy { it.id }

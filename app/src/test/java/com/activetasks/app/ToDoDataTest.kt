@@ -109,29 +109,66 @@ class ToDoDataTest {
     }
 
     @Test
-    fun mergeImportedToDoItems_addsOnlyNewIds() {
+    fun reconcileWithSheet_takesSheetFieldsButKeepsLocalProgress() {
         val existing = listOf(
-            ToDoItem(id = "sheet-List-A", description = "A", list = "List", importance = 1f, urgency = 1f, done = true)
+            ToDoItem(id = "sheet-List-A", description = "A", list = "List", importance = 1f, urgency = 1f, progress = 60, addedAtEpochMs = 5L)
         )
         val imported = listOf(
-            ToDoItem(id = "sheet-List-A", description = "A", list = "List"),
+            ToDoItem(id = "sheet-List-A", description = "A", list = "List", link = "https://x", importance = 0.2f, urgency = 0.3f),
             ToDoItem(id = "sheet-List-B", description = "B", list = "List")
         )
-        val merged = mergeImportedToDoItems(imported, existing)
-        assertEquals(2, merged.size)
-        // The existing item's triage/done state survives untouched - the sheet copy is ignored.
-        val a = merged.first { it.id == "sheet-List-A" }
-        assertTrue(a.done)
-        assertEquals(1f, a.importance)
-        assertEquals(1f, a.urgency)
+        val rebuilt = reconcileWithSheet(imported, existing, pending = emptyList())
+        assertEquals(2, rebuilt.size)
+        val a = rebuilt.first { it.id == "sheet-List-A" }
+        // The Sheet is definitive for priority and link; progress and add time are local.
+        assertEquals(0.2f, a.importance)
+        assertEquals(0.3f, a.urgency)
+        assertEquals("https://x", a.link)
+        assertEquals(60, a.progress)
+        assertEquals(5L, a.addedAtEpochMs)
     }
 
     @Test
-    fun mergeImportedToDoItems_migratesALegacyItemOntoItsNewTaskIdBasedId_whenItsRowGainsATaskId() {
-        // Simulates the exact bug hit in practice: an item synced before the Sheet's Task ID
-        // column was populated is stored under the legacy sheet-$list-$description id; the next
-        // sync now reads the same row fresh with a Task ID, under a new sheet-$taskId id. Without
-        // migration this reads as two different tasks.
+    fun reconcileWithSheet_dropsAnItemWhoseRowIsNoLongerReferred() {
+        val existing = listOf(
+            ToDoItem(id = "sheet-List-A", description = "A", list = "List", progress = 50),
+            ToDoItem(id = "sheet-List-B", description = "B", list = "List")
+        )
+        val imported = listOf(ToDoItem(id = "sheet-List-B", description = "B", list = "List"))
+        assertEquals(listOf("sheet-List-B"), reconcileWithSheet(imported, existing, emptyList()).map { it.id })
+    }
+
+    @Test
+    fun reconcileWithSheet_keepsAQueuedCompletionGoneEvenThoughTheSheetStillShowsIt() {
+        val imported = listOf(ToDoItem(id = "sheet-List-A", description = "A", list = "List"))
+        val pending = listOf(PendingChange(PendingOp.CLEAR_PRIORITY, "sheet-List-A", "List", "A", taskId = null))
+        assertTrue(reconcileWithSheet(imported, existing = emptyList(), pending = pending).isEmpty())
+    }
+
+    @Test
+    fun reconcileWithSheet_keepsAQueuedPriorityChangeOverTheSheetsOlderValue() {
+        val existing = listOf(ToDoItem(id = "sheet-List-A", description = "A", list = "List", importance = 0.9f, urgency = 0.8f))
+        val imported = listOf(ToDoItem(id = "sheet-List-A", description = "A", list = "List", importance = 0.1f, urgency = 0.1f))
+        val pending = listOf(
+            PendingChange(PendingOp.SET_PRIORITY, "sheet-List-A", "List", "A", taskId = null, importance = 0.9f, urgency = 0.8f)
+        )
+        val item = reconcileWithSheet(imported, existing, pending).single()
+        assertEquals(0.9f, item.importance)
+        assertEquals(0.8f, item.urgency)
+    }
+
+    @Test
+    fun reconcileWithSheet_keepsAnItemAMessageAddedAfterTheReadStarted() {
+        val messaged = ToDoItem(id = "sheet-t1", description = "New", list = "List", taskId = "t1")
+        val rebuilt = reconcileWithSheet(imported = emptyList(), existing = listOf(messaged), pending = emptyList(), keepIds = setOf("sheet-t1"))
+        assertEquals(listOf("sheet-t1"), rebuilt.map { it.id })
+    }
+
+    @Test
+    fun reconcileWithSheet_migratesALegacyItemOntoItsNewTaskIdBasedId_whenItsRowGainsATaskId() {
+        // An item synced before the Sheet's Task ID column was populated is stored under the legacy
+        // sheet-$list-$description id; the next sync reads the same row with a Task ID, under a new
+        // sheet-$taskId id. Without migration this reads as remove-old + add-new, losing progress.
         val legacy = ToDoItem(
             id = "sheet-Errands-Buy milk", description = "Buy milk", list = "Errands",
             importance = 0.5f, urgency = 0.5f, progress = 40
@@ -140,22 +177,17 @@ class ToDoDataTest {
             id = "sheet-abc-123", description = "Buy milk", list = "Errands", taskId = "abc-123",
             importance = 0.7f, urgency = 0.3f
         )
-        val merged = mergeImportedToDoItems(listOf(freshlyImported), listOf(legacy))
-        assertEquals(1, merged.size)
-        val item = merged.single()
+        val item = reconcileWithSheet(listOf(freshlyImported), listOf(legacy), emptyList()).single()
         assertEquals("sheet-abc-123", item.id)
         assertEquals("abc-123", item.taskId)
-        // The new priority values from the sheet win, but local progress carries over untouched.
         assertEquals(0.7f, item.importance)
         assertEquals(40, item.progress)
     }
 
     @Test
-    fun mergeImportedToDoItems_resolvesADeviceAlreadyDuplicatedByTheTaskIdRollout() {
-        // A device that already synced once under the bug above now has both the legacy item
-        // (real progress) and the taskId-based duplicate a prior sync already added (0% progress,
-        // since a freshly-imported item never carries local progress). The next sync should
-        // collapse them back to one card with the real progress, with no user action needed.
+    fun reconcileWithSheet_resolvesADeviceAlreadyDuplicatedByTheTaskIdRollout() {
+        // Both the legacy item (real progress) and the taskId-based duplicate an older sync added
+        // (0%) are stored; the next sync collapses them to one card with the real progress.
         val legacy = ToDoItem(
             id = "sheet-Errands-Buy milk", description = "Buy milk", list = "Errands",
             importance = 0.5f, urgency = 0.5f, progress = 40
@@ -165,23 +197,68 @@ class ToDoDataTest {
             importance = 0.7f, urgency = 0.3f, progress = 0
         )
         val freshlyImported = alreadyDuplicated.copy(importance = 0.8f)
-        val merged = mergeImportedToDoItems(listOf(freshlyImported), listOf(legacy, alreadyDuplicated))
-        assertEquals(1, merged.size)
-        assertEquals(40, merged.single().progress)
-        assertEquals("sheet-abc-123", merged.single().id)
+        val rebuilt = reconcileWithSheet(listOf(freshlyImported), listOf(legacy, alreadyDuplicated), emptyList())
+        assertEquals(1, rebuilt.size)
+        assertEquals(40, rebuilt.single().progress)
+        assertEquals("sheet-abc-123", rebuilt.single().id)
     }
 
     @Test
-    fun mergeImportedToDoItems_dedupesCollidingIdsWithinOneImportBatch() {
+    fun reconcileWithSheet_dedupesCollidingIdsWithinOneImportBatch() {
         // Two sheet rows with identical description text and no Task ID collide on the same id -
-        // distinctBy keeps the crash-prone duplicate out of the merged list (SPEC.md "Harden
-        // against user edits": "Related risk... two rows in the same tab with identical description").
+        // LazyColumn would hard-crash on the duplicate key.
         val imported = listOf(
             ToDoItem(id = "sheet-List-Dup", description = "Dup", list = "List", importance = 0.1f),
             ToDoItem(id = "sheet-List-Dup", description = "Dup", list = "List", importance = 0.9f)
         )
-        val merged = mergeImportedToDoItems(imported, emptyList())
-        assertEquals(1, merged.size)
+        assertEquals(1, reconcileWithSheet(imported, emptyList(), emptyList()).size)
+    }
+
+    @Test
+    fun enqueuePendingChange_replacesAnUnsentPriorityChangeForTheSameItem() {
+        val first = PendingChange(PendingOp.SET_PRIORITY, "i1", "List", "A", null, importance = 0.1f)
+        val second = PendingChange(PendingOp.SET_PRIORITY, "i1", "List", "A", null, importance = 0.9f)
+        assertEquals(listOf(second), enqueuePendingChange(listOf(first), second))
+    }
+
+    @Test
+    fun enqueuePendingChange_aCompletionDropsTheItemsUnsentPriorityChange_andBlocksLaterOnes() {
+        val priority = PendingChange(PendingOp.SET_PRIORITY, "i1", "List", "A", null, importance = 0.5f)
+        val completion = PendingChange(PendingOp.DELETE_ROW, "i1", "List", "A", null)
+        val queue = enqueuePendingChange(listOf(priority), completion)
+        assertEquals(listOf(completion), queue)
+        assertEquals(queue, enqueuePendingChange(queue, priority))
+        assertEquals(queue, enqueuePendingChange(queue, completion.copy(op = PendingOp.CLEAR_PRIORITY)))
+    }
+
+    @Test
+    fun readWritePendingChanges_roundTrips() {
+        val queue = listOf(
+            PendingChange(PendingOp.CLEAR_PRIORITY, "sheet-t1", "List", "A", "t1", queuedAtEpochMs = 10L),
+            PendingChange(PendingOp.SET_PRIORITY, "sheet-List-B", "List", "B", null, 0.25f, 0.75f, 20L)
+        )
+        assertEquals(queue, readPendingChanges(writePendingChanges(queue)))
+        assertTrue(readPendingChanges("not json").isEmpty())
+    }
+
+    @Test
+    fun applyTaskEvent_referredAddsTheItem_andRepeatingItIsHarmless() {
+        val event = TaskEvent(TaskEvent.REFERRED, "t1", "Errands", "Buy milk", "https://x", 0.6f, 0.4f)
+        val once = applyTaskEvent(emptyList(), event)
+        val item = once.single()
+        assertEquals("sheet-t1", item.id)
+        assertEquals("Errands", item.list)
+        assertEquals(0.6f, item.importance)
+        assertEquals(once, applyTaskEvent(once, event))
+    }
+
+    @Test
+    fun applyTaskEvent_matchesByTaskIdOnlyWhenBothSidesHaveOne() {
+        val withId = ToDoItem(id = "sheet-t1", description = "Same", list = "List", taskId = "t1")
+        val otherTaskSameText = TaskEvent(TaskEvent.COMPLETED_FOR_NOW, "t2", "List", "Same")
+        assertEquals(listOf(withId), applyTaskEvent(listOf(withId), otherTaskSameText))
+        val legacy = ToDoItem(id = "sheet-List-Same", description = "Same", list = "List")
+        assertTrue(applyTaskEvent(listOf(legacy), otherTaskSameText).isEmpty())
     }
 
     @Test

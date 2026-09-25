@@ -52,16 +52,17 @@ auto-trigger the release workflow, same convention as MicroTasking):
 
 ## Architecture
 
-Four source files under `app/src/main/java/com/activetasks/app/`:
+Six source files under `app/src/main/java/com/activetasks/app/`:
 
 - **`MainActivity.kt`** — the Activity plus every Compose screen: Settings (paste/QR-scan the
-  Sheet URL, the Apps Script Web App URL, importance-weight and items-per-list settings, Sync
-  Lists), `CarouselScreen` (a `HorizontalPager` of per-list top-N views — this *is* the home
+  Sheet URL, the Apps Script Web App URL, importance-weight and items-per-list settings - all a
+  hoisted `SettingsDraft`; Save with changed connection details is what syncs, there's no Sync
+  button), `CarouselScreen` (a `HorizontalPager` of per-list top-N views — this *is* the home
   screen, there's no separate "see everything" list-detail screen), the continuous Eisenhower
   matrix widget (`MatrixWidget`, tap/drag position → importance/urgency floats), `ToDoItemRow`
   (each referred item is a card: task text, then Complete-for-now / Fully-complete / Priority &
   progress / Open-link buttons underneath — no checkbox, no trash icon), `ItemDetailDialog`
-  (priority matrix + progress slider only), QR scanner (ML Kit barcode scanning, copied from
+  (priority matrix + progress slider only; a moved priority is queued for write-back on close), QR scanner (ML Kit barcode scanning, copied from
   MicroTasking's `QrScannerScreen`). There is deliberately **no** add-item path: a list only ever
   holds items referred from MicroTasking (`itemsToLoad` also purges anything a pre-referral build
   stored, gated by `ITEMS_SCHEMA_VERSION`). The carousel opens on the last-swiped list, else the
@@ -69,15 +70,24 @@ Four source files under `app/src/main/java/com/activetasks/app/`:
 - **`ToDoData.kt`** — data model (`ToDoItem`, `Quadrant`), JSON read/write helpers
   (SharedPreferences-backed, no Room/DB — same convention as MicroTasking's `TaskPool.kt`), plain
   CSV row parsing (`parseToDoCsvRows`), gated-ingestion item construction
-  (`toDoItemsFromReferredRows`, requires a `SheetPriority` per row from `SheetApiClient.kt`), and
-  the merge-on-resync policy (`mergeImportedToDoItems`).
+  (`toDoItemsFromReferredRows`, requires a `SheetPriority` per row from `SheetApiClient.kt`), the
+  Sheet-definitive rebuild (`reconcileWithSheet`), the pending-changes queue model
+  (`PendingChange`, `enqueuePendingChange`) and applying a cross-app message (`applyTaskEvent`).
+- **`TaskStore.kt`** — process-wide owner of the saved copy (items, known lists, pending-changes
+  queue) shared by the screens, `TaskEventReceiver` and `PendingFlushWorker`; runs sync, flush and
+  switch-Sheet one at a time under one mutex. Also `PendingFlushWorker`, the one-shot WorkManager
+  job that flushes the queue when the network returns.
+- **`TaskEvents.kt`** — the cross-app message contract with MicroTasking (explicit broadcast,
+  signature-level permission shared by both apps; must match MicroTasking's copy exactly - see
+  `SPEC.md` "Synchronization" > "Message contract, v1"), plus `TaskEventReceiver`.
 - **`SheetImport.kt`** — generic Google Sheet tab discovery + per-tab CSV fetch
-  (`fetchSheetTabs`, columns A-C only), adapted from MicroTasking's `MainActivity.kt` Sheet-import
+  (`fetchSheetTabs`, columns A-C only; null on any failure - never a partial read), adapted from MicroTasking's `MainActivity.kt` Sheet-import
   functions but kept free of any `ToDoItem`-specific mapping so it's just "give me every tab's raw
   CSV."
 - **`SheetApiClient.kt`** — client for the Apps Script Web App that reads/writes the hidden,
   protected importance/urgency columns (`fetchTabPriorities`) and clears/deletes a row
-  (`clearSheetPriority`, `deleteSheetRow`). The endpoint is owned and implemented by MicroTasking's
+  (`clearSheetPriority`, `deleteSheetRow`, `setSheetPriority`); `fetchAllPriorities` returns null on
+  failure, never an empty list. The endpoint is owned and implemented by MicroTasking's
   repo (`scripts/populate_google_sheet.js` there); this file's request/response shape is
   provisional until that side's contract is confirmed — see PUNCH_LIST.md.
 
@@ -89,13 +99,12 @@ weight itself is a user Settings value (`DEFAULT_IMPORTANCE_WEIGHT = 2f`), not a
 constant, since MicroTasking always writes raw unweighted values. `Quadrant`/`quadrant()` still
 exist as a coarse 0.5-threshold bucketing for badge display/coloring only.
 
-**Merge-on-resync policy, deliberately asymmetric with MicroTasking's**: `mergeImportedToDoItems`
-only *adds* newly-imported sheet rows not already present by id — it never removes or overwrites an
-existing item just because its sheet row disappeared, got its priority cleared, or the re-import
-ran again. An item you're already treating as a live to-do here (progress, priority re-triage)
-stays yours until you deal with it in the app; the sheet is a source of new items, not a mirror to
-sync down to. (MicroTasking's `mergeImportedManagedTasks` is stricter because its sheet is the
-authoritative *category* list; ActiveTasks's sheet is only ever a source of new items.)
+**Sync policy: the Sheet is definitive** (changed 2026-09-24 from an add-only merge). Every
+successful sync rebuilds the item set from the Sheet's referred rows (`reconcileWithSheet`); only
+progress is local. A sync is all-or-nothing - any failed read changes nothing, which is why
+`fetchSheetTabs`/`fetchAllPriorities` must never turn a failure into an empty result. Local
+actions apply immediately and reach the Sheet through the persisted pending-changes queue, which
+a sync lays over its read so an unsent change is never reverted. See `SPEC.md` "Synchronization".
 
 **Google Sheet import**: same mechanics as MicroTasking for columns A-C (tab names via the `.xlsx`
 export's zipped `workbook.xml`, each tab's rows via the `gviz` CSV export, column A as the enabled
@@ -113,8 +122,9 @@ Android framework (unlike MicroTasking's `TaskDeliveryTest`, which needs real
 feature work), `DEFECTS.md` (numbered bug write-ups, empty so far).
 
 **Release pipeline** (`.github/workflows/release-apk.yml`, `scripts/generate_install_page.py`):
-same shape as MicroTasking's (debug-signed APK via a checked-in debug keystore — a different key
-than MicroTasking's, generated fresh for this repo — GitHub Release tagged `vBASE-N`, install
+same shape as MicroTasking's (debug-signed APK via a checked-in debug keystore — since 2026-09-24 the
+same key as MicroTasking's (a copy of its `keystore/debug.keystore`), required by the shared
+signature-level permission the two apps' cross-app messages use — GitHub Release tagged `vBASE-N`, install
 page with QR code(s) deployed to GitHub Pages), but trimmed: no `--template-url` step, since the
 install page tells the user to reuse the Sheet they already set up for MicroTasking rather than
 create a new one.

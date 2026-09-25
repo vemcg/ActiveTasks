@@ -340,6 +340,13 @@ def main() -> None:
             <li>If Google Play Protect displays a warning, tap <strong>More details &rarr; Install anyway</strong>.</li>
           </ul>
         </li>
+        <li>
+          <strong>Updating from a build before September 24, 2026? Uninstall it first, once.</strong>
+          ActiveTasks is now signed with the same key as MicroTasking, so the two apps can update each
+          other instantly, and Android won't install it over an older copy signed with the old key
+          ("App not installed"). Uninstall ActiveTasks, then install this one. Your lists come back
+          from your Sheet on the first sync; only progress percentages are lost.
+        </li>
       </ol>
     </section>
 
@@ -361,7 +368,7 @@ def main() -> None:
           same two codes for both apps, so if you already made them for MicroTasking, reuse them.
         </li>
         <li>Open <strong>ActiveTasks</strong> on your Android phone, open <strong>Settings</strong> and tap <strong>Scan Sheet QR Code</strong> and <strong>Scan Web App QR Code</strong> to scan the two codes (each is filed by what it contains, so a mix-up can't overwrite the other box). Or paste the two URLs into the boxes by hand.</li>
-        <li>Tap <strong>Sync Lists</strong>.</li>
+        <li>Tap <strong>Save Settings</strong>. ActiveTasks syncs with your Sheet and opens your lists. From then on it stays in sync on its own.</li>
       </ol>
     </section>
 
