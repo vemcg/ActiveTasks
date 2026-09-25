@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-// Updated 2026-09-24, after version v0.2.0-24 main 2026-09-24
+// Updated 2026-09-24, after version v0.2.0-25 synchronization-improvements 2026-09-24
 package com.activetasks.app
 
 import org.json.JSONArray
@@ -12,6 +12,18 @@ data class SheetTabCsv(val tabName: String, val csv: String)
 
 fun extractGoogleSheetId(url: String): String? =
     Regex("/spreadsheets/d/([a-zA-Z0-9_-]+)").find(url)?.groupValues?.getOrNull(1)
+
+/**
+ * Whether saving [newUrl] over [oldUrl] points the app at a different spreadsheet - compared by
+ * spreadsheet id, not URL text, so the same Sheet written another way (the QR's bare `/d/<id>` vs a
+ * pasted `/edit#gid=0`) doesn't count. A blank or unparseable URL on either side never counts:
+ * there's no other Sheet to switch to. Same rule as MicroTasking's.
+ */
+fun isDifferentSheet(oldUrl: String, newUrl: String): Boolean {
+    val oldId = extractGoogleSheetId(oldUrl) ?: return false
+    val newId = extractGoogleSheetId(newUrl) ?: return false
+    return oldId != newId
+}
 
 private fun unescapeXmlEntities(text: String): String = text
     .replace("&amp;", "&")

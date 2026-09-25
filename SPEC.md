@@ -275,7 +275,7 @@ the other within seconds, without waiting for a Sheet read.
    pending-changes queue (below) - no periodic job, no notifications, so ActiveTasks stays a pull
    app. An incoming message from MicroTasking applies its single change without a Sheet read.
 
-**Switching to a different Sheet** (Sheet URL changed on Save): everything local tied to the old
+**Switching to a different Sheet** (a different spreadsheet id saved - compared by id, not URL text, so the same Sheet pasted in another URL form doesn't count; a blank URL never counts; `isDifferentSheet`): everything local tied to the old
 Sheet is thrown away before the resync - items, `known_lists`, `last_list` and the pending-changes
 queue. The user doesn't move back and forth between Sheets, so nothing is carried over. (A Web App
 URL change alone, same Sheet, is a redeploy of the same script and keeps local state.)

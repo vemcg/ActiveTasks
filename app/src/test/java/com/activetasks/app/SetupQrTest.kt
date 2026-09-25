@@ -44,6 +44,16 @@ class SetupQrTest {
     }
 
     @Test
+    fun isDifferentSheet_comparesSpreadsheetIdsNotUrlText() {
+        val bare = "https://docs.google.com/spreadsheets/d/abc123"
+        val edit = "https://docs.google.com/spreadsheets/d/abc123/edit#gid=0"
+        assertFalse(isDifferentSheet(bare, edit))
+        assertTrue(isDifferentSheet(bare, "https://docs.google.com/spreadsheets/d/xyz789/edit"))
+        assertFalse(isDifferentSheet("", bare))
+        assertFalse(isDifferentSheet(bare, "not a sheet url"))
+    }
+
+    @Test
     fun sheetUrl_isNotAWebAppUrl() {
         assertFalse(looksLikeWebAppUrl(sheet))
         assertNull(parseSetupQr(sheet).webAppUrl)

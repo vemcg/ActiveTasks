@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-// Updated 2026-09-24, after version v0.2.0-24 main 2026-09-24
+// Updated 2026-09-24, after version v0.2.0-25 synchronization-improvements 2026-09-24
 package com.activetasks.app
 
 import android.Manifest
@@ -203,8 +203,8 @@ fun ActiveTasksApp(
     fun saveSettings(draft: SettingsDraft) {
         val newSheetUrl = draft.sheetUrl.trim()
         val newAppsScriptUrl = draft.appsScriptUrl.trim()
-        val sheetChanged = newSheetUrl != sheetUrl
-        val connectionChanged = sheetChanged || newAppsScriptUrl != appsScriptUrl
+        val sheetSwitched = isDifferentSheet(sheetUrl, newSheetUrl)
+        val connectionChanged = newSheetUrl != sheetUrl || newAppsScriptUrl != appsScriptUrl
         importanceWeight = weightFromPriorityTilt(draft.priorityTilt)
         onImportanceWeightSaved(importanceWeight)
         topN = draft.topN
@@ -220,7 +220,7 @@ fun ActiveTasksApp(
         savingSync = true
         settingsMessage = ""
         coroutineScope.launch {
-            if (sheetChanged) {
+            if (sheetSwitched) {
                 TaskStore.switchSheet(context)
                 lastList = null
             }
