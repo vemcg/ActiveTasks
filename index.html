@@ -51,6 +51,14 @@
     border-radius: 8px;
     border: 1px solid var(--border);
   }
+  .companion-link {
+    margin-top: 1rem;
+    text-align: left;
+    background: var(--card-bg);
+    padding: 0.9rem 1.25rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
   .step {
     background: var(--card-bg);
     border: 1px solid var(--border);
@@ -113,12 +121,29 @@
     text-align: center;
     margin: 1.25rem 0;
   }
-  .qr-container img {
+  .qr-container img, .qr-container canvas {
     background: #fff;
     padding: 10px;
     border-radius: 8px;
     max-width: 220px;
     height: auto;
+  }
+  /* qrcodejs drops a <canvas> (or a <table> fallback) straight into #sheetQr / #webAppQr; center whichever. */
+  #sheetQr, #webAppQr {
+    display: flex;
+    justify-content: center;
+  }
+  #sheetQr table, #webAppQr table {
+    margin: 0 auto;
+  }
+  .setup-part {
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border, rgba(127, 127, 127, 0.3));
+  }
+  .setup-part h3 {
+    margin: 0 0 0.5rem;
+    font-size: 1.05rem;
   }
   .qr-row {
     display: flex;
@@ -134,6 +159,28 @@
     font-weight: 600;
     color: var(--accent);
     margin-bottom: 0.4rem;
+  }
+  .qr-meta {
+    margin-top: 0.5rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    word-break: break-all;
+  }
+  .input-group {
+    margin: 1rem 0;
+  }
+  input[type="url"] {
+    width: 100%;
+    padding: 0.75rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: #090d16;
+    color: #fff;
+    font-size: 1rem;
+  }
+  input[type="url"]:focus {
+    outline: none;
+    border-color: var(--accent);
   }
   .badge-android {
     display: inline-block;
@@ -156,16 +203,14 @@
     color: #cbd5e1;
   }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
   <header>
     <h1>ActiveTasks</h1>
     <div class="tagline">A to-do list, prioritized the Eisenhower way.</div>
     <div class="intro">
-      <strong>ActiveTasks</strong> is a companion to MicroTasking: a traditional to-do list that reads
-      the same Google Sheet as MicroTasking. Items don't just appear here from every checked row -
-      you <strong>refer</strong> a task to ActiveTasks from MicroTasking's own task queue, dragging a
-      finger across an importance/urgency matrix to set its priority as you send it over.
+      <strong>ActiveTasks</strong> is a traditional to-do list for the tasks you have decided to work on. Every task sits on a priority you set by touching an importance &times; urgency matrix, and each list is a tab of your own Google Sheet. It works on its own: you find tasks in your Sheet and activate the ones you want, right in the app. It is also a peer of <a href="https://vemcg.github.io/MicroTasking/" target="_blank" rel="noopener"><strong>MicroTasking</strong></a>, which prompts you with bite-sized tasks from the same Sheet &mdash; use either app, or both together. <a href="https://vemcg.github.io/MicroTasking/" target="_blank" rel="noopener">MicroTasking's setup page &rarr;</a>
     </div>
   </header>
 
@@ -174,20 +219,45 @@
     <section class="step">
       <div class="step-header">
         <div class="step-num">1</div>
+        <div class="step-title">Create & Customize Your Task Pool</div>
+      </div>
+      <p>Your tasks are managed directly in a Google Sheet. <strong>Already set one up for MicroTasking?</strong> It is the very same Sheet &mdash; skip to Step 2.</p>
+      <ul>
+        <li><strong>Open the Template:</strong> Click <a href="https://docs.google.com/spreadsheets/d/1YZNQxZlzj8Xj4Bya2v8YEiq01n6jseD3JZSr7BlThJo/edit?usp=sharing" target="_blank" rel="noopener">Google Sheet Template</a> to open it in your browser.</li>
+        <li><strong>Make Your Copy:</strong> In Google Sheets, tap <strong>File &rarr; Make a copy</strong> to save an editable copy to your Google Drive.</li>
+        <li><strong>Lists = Tabs:</strong> Each tab at the bottom is a list (e.g. <em>Cleaning</em>, <em>Decluttering</em>, <em>Admin</em>). Add, rename, or remove tabs as you wish.</li>
+        <li><strong>Tasks & Checkboxes:</strong> Add your tasks into the spreadsheet. Use the checkbox in <strong>Column A</strong> to enable or disable individual tasks &mdash; ActiveTasks's <strong>Find Task</strong> only offers enabled ones. <em>(Which tabs Find Task searches can be chosen in the app's Settings &rarr; Task Categories.)</em></li>
+      </ul>
+    </section>
+
+    <!-- STEP 2 -->
+    <section class="step">
+      <div class="step-header">
+        <div class="step-num">2</div>
         <div class="step-title">Install & Launch the App <span class="badge-android">Android Only</span></div>
       </div>
       <ol>
         <li>
-          <strong>Scan or Download:</strong> Point your phone's camera at the QR code below, or tap its download link if you are viewing this page on your phone:
-          <div class="qr-container">
-            
-            <img src="qr-0.2.0-29.png" alt="ActiveTasks APK QR Code (v0.2.0-29)">
+          <strong>Scan or Download:</strong> Point your phone's camera at the <strong>Stable Release</strong> QR code (on the left) below, or tap its download link if you are viewing this page on your phone:
+          <div class="qr-row">
+            <div class="qr-container">
+            <div class="qr-label">Stable Release</div>
+            <img src="qr-main-0.2.0-29.png" alt="ActiveTasks APK QR Code (v0.2.0-29)">
             <br>
             <a href="https://github.com/vemcg/ActiveTasks/releases/download/v0.2.0-29/ActiveTasks-v0.2.0-29.apk" class="btn" target="_blank" rel="noopener">Download ActiveTasks APK (v0.2.0-29)</a>
             <br>
             <a href="https://github.com/vemcg/ActiveTasks/releases/download/v0.2.0-29/ActiveTasks-v0.2.0-29.apk" target="_blank" rel="noopener">Open the download again</a>
           </div>
-          
+            <div class="qr-container">
+            <div class="qr-label">feature-convergence</div>
+            <img src="qr-0.2.0-30.png" alt="ActiveTasks APK QR Code (v0.2.0-30)">
+            <br>
+            <a href="https://github.com/vemcg/ActiveTasks/releases/download/v0.2.0-30/ActiveTasks-v0.2.0-30.apk" class="btn" target="_blank" rel="noopener">Download ActiveTasks APK (v0.2.0-30)</a>
+            <br>
+            <a href="https://github.com/vemcg/ActiveTasks/releases/download/v0.2.0-30/ActiveTasks-v0.2.0-30.apk" target="_blank" rel="noopener">Open the download again</a>
+          </div>
+          </div>
+          <p class="qr-guidance"><strong>Which one to use:</strong> Install from the <strong>Stable Release</strong> on the left &mdash; that is the build you should download and run. The <strong>feature-convergence</strong> development build on the right is an in-progress branch, published for testing only. You are welcome to try it, but it may be unstable, may fail to install or launch, and carries no guarantee that it works at all.</p>
         </li>
         <li>
           <strong>Allow Sideloading (First Time Only):</strong>
@@ -204,48 +274,189 @@
           ("App not installed"). Uninstall ActiveTasks, then install this one. Your lists come back
           from your Sheet on the first sync; only progress percentages are lost.
         </li>
-      </ol>
-    </section>
-
-    <!-- STEP 2 -->
-    <section class="step">
-      <div class="step-header">
-        <div class="step-num">2</div>
-        <div class="step-title">Point It at Your MicroTasking Google Sheet</div>
-      </div>
-      <p>
-        ActiveTasks doesn't need a spreadsheet of its own &mdash; it reads the same one MicroTasking
-        already uses. If you already have MicroTasking set up:
-      </p>
-      <ol>
         <li>
-          Get your two setup QR codes (Sheet URL and Apps Script Web App URL) from
-          <a href="https://vemcg.github.io/MicroTasking/#setup" target="_blank" rel="noopener">Step 3 of the MicroTasking onboarding page</a>.
-          That section also explains how to deploy the Web App and find its URL &mdash; it's the
-          same two codes for both apps, so if you already made them for MicroTasking, reuse them.
+          <strong>Launch:</strong> Open ActiveTasks from your home screen. It never sends notifications or wakes your screen; the only permission it asks for is the <strong>Camera</strong>, when you scan a setup QR code in Step 4.
         </li>
-        <li>Open <strong>ActiveTasks</strong> on your Android phone, open <strong>Settings</strong> and tap <strong>Scan Sheet QR Code</strong> and <strong>Scan Web App QR Code</strong> to scan the two codes (each is filed by what it contains, so a mix-up can't overwrite the other box). Or paste the two URLs into the boxes by hand.</li>
-        <li>Tap <strong>Save Settings</strong>. ActiveTasks syncs with your Sheet and opens your lists. From then on it stays in sync on its own.</li>
       </ol>
     </section>
 
     <!-- STEP 3 -->
-    <section class="step">
+    <section class="step" id="setup">
       <div class="step-header">
         <div class="step-num">3</div>
-        <div class="step-title">Refer a Task from MicroTasking</div>
+        <div class="step-title">Generate Your Setup QR Codes</div>
       </div>
-      <p>
-        ActiveTasks starts empty on purpose &mdash; a task only shows up here once you send it over
-        from MicroTasking:
-      </p>
+      <p>Instead of typing long URLs on your phone keyboard, generate QR codes right here. There are <strong>two separate codes</strong> &mdash; one for your Sheet, one for the Web App URL &mdash; and the same two work in <strong>both</strong> ActiveTasks and <a href="https://vemcg.github.io/MicroTasking/#setup" target="_blank" rel="noopener">MicroTasking</a>. You scan each one on its own; scanning one never replaces what the other one set. (This page and MicroTasking's page remember what you type, so you only enter each URL once.)</p>
+
+      <div class="setup-part">
+        <h3>A. Sheet QR code</h3>
+        <p>In your copied Google Sheet, make sure sharing is set to <strong>"Anyone with the link can view"</strong> (tap <strong>Share &rarr; Anyone with the link</strong>). Then copy the Sheet URL from your browser bar and paste the whole thing below &mdash; <code>#gid=</code> and <code>?usp=</code> junk and all. It's trimmed down to just the sheet ID before the QR code is made.</p>
+        <div class="input-group">
+          <input type="url" id="sheetUrl" placeholder="Google Sheet URL: https://docs.google.com/spreadsheets/d/your-sheet-id/edit..." oninput="generateSheetQr()" onfocus="this.select()">
+        </div>
+        <div class="qr-container" id="sheetQrContainer" style="display:none;">
+          <p style="margin-bottom: 0.5rem; font-weight: 600; color: var(--accent);">Your Sheet QR Code:</p>
+          <div id="sheetQr"></div>
+          <div class="qr-meta" id="sheetQrMeta"></div>
+        </div>
+      </div>
+
+      <div class="setup-part">
+        <h3>B. Web App QR code</h3>
+        <p>This is the address that lets the app write back to your Sheet &mdash; activating a task, marking it complete, and changing its priority. It is <em>not</em> the address of the Apps Script editor tab. Get it by deploying the script from your Sheet, once, on a computer:</p>
+        <ol>
+          <li>In your Sheet, open <strong>Extensions &rarr; Apps Script</strong>.</li>
+          <li>Click <strong>Deploy &rarr; New deployment</strong> (or <strong>Manage deployments</strong> if you already deployed it).</li>
+          <li>Click the gear next to "Select type" and choose <strong>Web app</strong>. Set <strong>Execute as: Me</strong> and <strong>Who has access: Anyone</strong>, then click <strong>Deploy</strong> (approve the permissions prompt the first time).</li>
+          <li>Copy the <strong>Web app URL</strong> it shows &mdash; it starts with <code>https://script.google.com/macros/s/</code> and ends in <code>/exec</code> &mdash; and paste it below.</li>
+        </ol>
+        <div class="input-group">
+          <input type="url" id="webAppUrl" placeholder="Apps Script Web App URL: https://script.google.com/macros/s/.../exec" oninput="generateWebAppQr()" onfocus="this.select()">
+          <div class="qr-meta" id="webAppUrlProblem" style="color: #fca5a5;"></div>
+        </div>
+        <div class="qr-container" id="webAppQrContainer" style="display:none;">
+          <p style="margin-bottom: 0.5rem; font-weight: 600; color: var(--accent);">Your Web App QR Code:</p>
+          <div id="webAppQr"></div>
+          <div class="qr-meta" id="webAppQrMeta"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 4 -->
+    <section class="step">
+      <div class="step-header">
+        <div class="step-num">4</div>
+        <div class="step-title">Scan & Sync in ActiveTasks</div>
+      </div>
       <ol>
-        <li>In <strong>MicroTasking</strong>, open the task queue.</li>
-        <li>Tap <strong>Refer to ActiveTasks</strong> on any task, any time &mdash; it doesn't matter whether you've started it yet.</li>
-        <li>Drag/tap the importance &times; urgency matrix that pops up to set its priority. That task leaves MicroTasking's queue and lands in ActiveTasks.</li>
-        <li>Back in <strong>ActiveTasks</strong>, swipe between your lists (one per Sheet tab) to find it, set a progress %, and mark it <strong>Complete (for now)</strong> to hand it back to MicroTasking, or <strong>Fully complete</strong> to remove it for good.</li>
+        <li>Open the <strong>ActiveTasks</strong> app on your Android phone.</li>
+        <li>Tap the <strong>Settings (gear icon)</strong> in the top corner.</li>
+        <li>Open the <strong>Google Sheet Connection</strong> section.</li>
+        <li>Tap <strong>Scan Sheet QR Code</strong> and scan the <strong>Sheet QR code</strong> from Step 3. A scan only fills in the Sheet URL box &mdash; nothing is saved yet.</li>
+        <li>Tap <strong>Scan Web App QR Code</strong> and scan that one. It fills in the Web App URL box the same way. Under each box you'll see a link to what you scanned, or a note if it doesn't look right.</li>
+        <li>Tap <strong>Save Settings</strong>. That saves both and syncs your lists and tasks; the screen says <em>Syncing&hellip;</em> and returns to your lists when it's done (or stays open and tells you what went wrong).</li>
       </ol>
     </section>
+
+    <!-- STEP 5 -->
+    <section class="step">
+      <div class="step-header">
+        <div class="step-num">5</div>
+        <div class="step-title">Find Your First Tasks</div>
+      </div>
+      <p>ActiveTasks starts empty on purpose &mdash; a task only appears once you <strong>activate</strong> it by giving it a priority:</p>
+      <ol>
+        <li>Tap the <strong>circle-with-a-plus</strong> button in the top bar to find tasks across every category chosen in <strong>Settings &rarr; Task Categories</strong>, or the same button at the bottom right of a list to find tasks in just that list.</li>
+        <li>Tap <strong>Activate</strong> on a task, then touch the importance &times; urgency matrix to set its priority (and, if you like, its progress) and tap <strong>Activate</strong> again.</li>
+        <li>Swipe between your lists to work through them. Mark a task <strong>Complete (for now)</strong> to put it back in the pool, or <strong>Fully complete</strong> to remove it for good.</li>
+      </ol>
+      <p style="color: var(--accent); font-weight: 600; margin-top: 0.5rem;">You're all set! Want random, bite-sized prompts from the same Sheet too? <a href="https://vemcg.github.io/MicroTasking/" target="_blank" rel="noopener">Set up MicroTasking</a> &mdash; scan the same two codes from Step 3 there. Tasks you refer from MicroTasking show up here automatically.</p>
+    </section>
   </main>
+
+  <script>
+    // Same keys as MicroTasking's page on purpose: both pages are served from the same origin
+    // (vemcg.github.io), so URLs entered on either one are already filled in on the other.
+    const SHEET_URL_STORAGE_KEY = 'microtaskingSheetUrl';
+    const WEBAPP_URL_STORAGE_KEY = 'microtaskingWebAppUrl';
+
+    // The spreadsheet id out of whatever the user pasted (full URL, /edit#gid= link, or a bare id).
+    function sheetIdFrom(raw) {
+      const str = String(raw || '').trim();
+      const m = str.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/) || str.match(/^([a-zA-Z0-9_-]{20,})$/);
+      return m ? m[1] : null;
+    }
+
+    // The apps' QR scanners just read the raw scanned text - there's no custom URI scheme. There
+    // are two separate codes, each a single line: the sheet URL, or the Web App URL. Each app tells
+    // them apart by what the line looks like (script.google.com = Web App; see parseSetupQr in
+    // SheetApiClient.kt) and only updates the setting that line belongs to, so scanning one code
+    // never overwrites what the other set. (Older two-line codes still parse the same way.)
+    function drawQr(container, qrDiv, text) {
+      qrDiv.innerHTML = '';
+      container.style.display = 'block';
+      new QRCode(qrDiv, {
+        text: text,
+        width: 200,
+        height: 200,
+        colorDark : "#000000",
+        colorLight : "#ffffff",
+        correctLevel : QRCode.CorrectLevel.M
+      });
+    }
+
+    // A Web App URL is https://script.google.com/macros/s/<id>/exec. The commonest mix-up is
+    // pasting the Apps Script *editor's* address instead, so name that case explicitly.
+    // Returns null when the URL is empty or fine, else a message saying what's wrong.
+    function webAppUrlProblem(raw) {
+      const str = String(raw || '').trim();
+      if (!str) return null;
+      if (str.indexOf('https://script.google.com/') !== 0) {
+        return "That doesn't look like a Web App URL - it should start with https://script.google.com/macros/s/";
+      }
+      if (str.indexOf('/home/') !== -1 || /\/edit([?#]|$)/.test(str)) {
+        return "That's the address of the Apps Script editor, not the Web App URL. In the editor, click Deploy > New deployment (or Manage deployments) and copy the Web app URL it shows.";
+      }
+      if (!/\/exec([?#]|$)/.test(str)) {
+        return "A Web App URL ends in /exec (a URL ending in /dev is the test deployment and won't work from your phone).";
+      }
+      return null;
+    }
+
+    function generateSheetQr() {
+      const container = document.getElementById('sheetQrContainer');
+      const meta = document.getElementById('sheetQrMeta');
+      const id = sheetIdFrom(document.getElementById('sheetUrl').value);
+      const sheetUrl = id ? 'https://docs.google.com/spreadsheets/d/' + id : '';
+
+      if (sheetUrl) {
+        localStorage.setItem(SHEET_URL_STORAGE_KEY, sheetUrl);
+        drawQr(container, document.getElementById('sheetQr'), sheetUrl);
+        meta.textContent = 'Generated from sheet ' + id + ' at ' + new Date().toLocaleString();
+      } else {
+        localStorage.removeItem(SHEET_URL_STORAGE_KEY);
+        document.getElementById('sheetQr').innerHTML = '';
+        container.style.display = 'none';
+        meta.textContent = '';
+      }
+    }
+
+    function generateWebAppQr() {
+      const container = document.getElementById('webAppQrContainer');
+      const meta = document.getElementById('webAppQrMeta');
+      const problemDiv = document.getElementById('webAppUrlProblem');
+      const webAppUrl = document.getElementById('webAppUrl').value.trim();
+      const problem = webAppUrlProblem(webAppUrl);
+
+      problemDiv.textContent = problem || '';
+      if (webAppUrl) {
+        localStorage.setItem(WEBAPP_URL_STORAGE_KEY, webAppUrl);
+      } else {
+        localStorage.removeItem(WEBAPP_URL_STORAGE_KEY);
+      }
+
+      if (webAppUrl && !problem) {
+        drawQr(container, document.getElementById('webAppQr'), webAppUrl);
+        meta.textContent = 'Generated from the Web App URL at ' + new Date().toLocaleString();
+      } else {
+        document.getElementById('webAppQr').innerHTML = '';
+        container.style.display = 'none';
+        meta.textContent = '';
+      }
+    }
+
+    (function restoreSavedUrls() {
+      const saved = localStorage.getItem(SHEET_URL_STORAGE_KEY);
+      const savedWebApp = localStorage.getItem(WEBAPP_URL_STORAGE_KEY);
+      if (saved) {
+        document.getElementById('sheetUrl').value = saved;
+        generateSheetQr();
+      }
+      if (savedWebApp) {
+        document.getElementById('webAppUrl').value = savedWebApp;
+        generateWebAppQr();
+      }
+    })();
+  </script>
 </body>
 </html>
