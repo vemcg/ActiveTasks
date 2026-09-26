@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-// Updated 2026-09-24, after version v0.2.0-25 synchronization-improvements 2026-09-24
+// Updated 2026-09-26, after version v0.2.0-29 main 2026-09-26
 package com.activetasks.app
 
 import android.Manifest
@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -21,16 +22,21 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -39,19 +45,25 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
@@ -75,12 +87,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -88,6 +108,7 @@ import androidx.core.content.ContextCompat
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -106,11 +127,15 @@ class MainActivity : ComponentActivity() {
                         initialImportanceWeight = preferences.getFloat("importance_weight", DEFAULT_IMPORTANCE_WEIGHT),
                         initialTopN = preferences.getInt("top_n", 5),
                         initialLastList = preferences.getString(TaskStore.KEY_LAST_LIST, null),
+                        initialExcludedCategories = readStringList(preferences.getString(KEY_EXCLUDED_CATEGORIES, "[]") ?: "[]").toSet(),
                         onSheetUrlSaved = { url -> preferences.edit().putString(TaskStore.KEY_SHEET_URL, url).apply() },
                         onAppsScriptUrlSaved = { url -> preferences.edit().putString(TaskStore.KEY_APPS_SCRIPT_URL, url).apply() },
                         onImportanceWeightSaved = { weight -> preferences.edit().putFloat("importance_weight", weight).apply() },
                         onTopNSaved = { count -> preferences.edit().putInt("top_n", count).apply() },
-                        onLastListSaved = { list -> preferences.edit().putString(TaskStore.KEY_LAST_LIST, list).apply() }
+                        onLastListSaved = { list -> preferences.edit().putString(TaskStore.KEY_LAST_LIST, list).apply() },
+                        onExcludedCategoriesSaved = { excluded ->
+                            preferences.edit().putString(KEY_EXCLUDED_CATEGORIES, writeStringList(excluded.sorted())).apply()
+                        }
                     )
                 }
             }
@@ -119,10 +144,14 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val PREFS_NAME = "activetasks_settings"
+
+        // Tabs the user unchecked under Settings > Task Categories. Stored as the *excluded* set so
+        // a tab added to the Sheet later is included by default, matching a fresh install (all in).
+        const val KEY_EXCLUDED_CATEGORIES = "find_task_excluded_categories"
     }
 }
 
-private enum class Screen { CAROUSEL, SETTINGS, QR_SCANNER }
+private enum class Screen { CAROUSEL, SETTINGS, QR_SCANNER, FIND_TASK }
 
 /**
  * Settings' unsaved edits. Hoisted above SettingsScreen (rather than local `remember`s there) so a
@@ -136,7 +165,9 @@ data class SettingsDraft(
     // biggest), 0 centered = equal. Converted to/from the persisted importanceWeight float only at
     // the edges (opening Settings, and Save) - see priorityTiltFromWeight/weightFromPriorityTilt.
     val priorityTilt: Float,
-    val topN: Int
+    val topN: Int,
+    // Tabs Find Task's header button leaves out (Settings > Task Categories, unchecked ones).
+    val excludedCategories: Set<String>
 )
 
 @Composable
@@ -146,11 +177,13 @@ fun ActiveTasksApp(
     initialImportanceWeight: Float,
     initialTopN: Int,
     initialLastList: String?,
+    initialExcludedCategories: Set<String>,
     onSheetUrlSaved: (String) -> Unit,
     onAppsScriptUrlSaved: (String) -> Unit,
     onImportanceWeightSaved: (Float) -> Unit,
     onTopNSaved: (Int) -> Unit,
-    onLastListSaved: (String) -> Unit
+    onLastListSaved: (String) -> Unit,
+    onExcludedCategoriesSaved: (Set<String>) -> Unit
 ) {
     val context = LocalContext.current
     var screen by remember { mutableStateOf(if (initialSheetUrl.isBlank()) Screen.SETTINGS else Screen.CAROUSEL) }
@@ -163,8 +196,13 @@ fun ActiveTasksApp(
     var importanceWeight by remember { mutableStateOf(initialImportanceWeight) }
     var topN by remember { mutableStateOf(initialTopN) }
     var lastList by remember { mutableStateOf(initialLastList) }
+    var excludedCategories by remember { mutableStateOf(initialExcludedCategories) }
     var editingItemId by remember { mutableStateOf<String?>(null) }
-    fun savedSettingsDraft() = SettingsDraft(sheetUrl, appsScriptUrl, priorityTiltFromWeight(importanceWeight), topN)
+    // Find Task: which list's page it was opened from (null = the header button, every selected
+    // category), and the not-yet-activated task whose priority dialog is open (with its draft values).
+    var findTaskList by remember { mutableStateOf<String?>(null) }
+    var activatingItem by remember { mutableStateOf<ToDoItem?>(null) }
+    fun savedSettingsDraft() = SettingsDraft(sheetUrl, appsScriptUrl, priorityTiltFromWeight(importanceWeight), topN, excludedCategories)
     var settingsDraft by remember { mutableStateOf(savedSettingsDraft()) }
     // True while Save Settings is waiting on the sync its connection change started.
     var savingSync by remember { mutableStateOf(false) }
@@ -174,6 +212,9 @@ fun ActiveTasksApp(
     val lists by TaskStore.lists.collectAsState()
     val stuckCount by TaskStore.stuckCount.collectAsState()
     val lastSyncMessage by TaskStore.lastSyncMessage.collectAsState()
+    val candidates by TaskStore.candidates.collectAsState()
+    val syncing by TaskStore.syncing.collectAsState()
+    val lastSyncFailed by TaskStore.lastSyncFailed.collectAsState()
     val coroutineScope = rememberCoroutineScope()
     // A tab with nothing currently referred to it doesn't get a carousel page at all - only lists
     // that actually have a live item show up, so swiping only ever lands on something. `lists`
@@ -198,6 +239,15 @@ fun ActiveTasksApp(
         screen = Screen.SETTINGS
     }
 
+    // Find Task shows what the last sync saw and refreshes it: the Sheet may have changed since.
+    fun openFindTask(list: String?) {
+        findTaskList = list
+        screen = Screen.FIND_TASK
+        TaskStore.requestSync(context)
+    }
+
+    BackHandler(enabled = screen == Screen.FIND_TASK) { screen = Screen.CAROUSEL }
+
     // Saves everything; a changed Sheet or Web App URL also resyncs (a different Sheet first
     // discards everything local to the old one), staying on Settings with the error if that fails.
     fun saveSettings(draft: SettingsDraft) {
@@ -209,6 +259,8 @@ fun ActiveTasksApp(
         onImportanceWeightSaved(importanceWeight)
         topN = draft.topN
         onTopNSaved(topN)
+        excludedCategories = draft.excludedCategories
+        onExcludedCategoriesSaved(excludedCategories)
         sheetUrl = newSheetUrl
         onSheetUrlSaved(newSheetUrl)
         appsScriptUrl = newAppsScriptUrl
@@ -265,7 +317,20 @@ fun ActiveTasksApp(
             },
             canGoBack = lists.isNotEmpty(),
             onCancel = { screen = Screen.CAROUSEL },
-            onSave = { saveSettings(it) }
+            onSave = { saveSettings(it) },
+            availableCategories = lists
+        )
+        Screen.FIND_TASK -> FindTaskScreen(
+            listName = findTaskList,
+            candidates = findTaskCandidates(candidates, findTaskList, excludedCategories),
+            hasSyncedLists = lists.isNotEmpty(),
+            allCategoriesExcluded = lists.isNotEmpty() && lists.all { it in excludedCategories },
+            syncing = syncing,
+            syncError = if (lastSyncFailed) lastSyncMessage else "",
+            onBack = { screen = Screen.CAROUSEL },
+            // Starts the same Priority & progress dialog an item gets, with the marker at the
+            // center; nothing is activated until that dialog's Activate button.
+            onActivate = { activatingItem = it.copy(importance = 0.5f, urgency = 0.5f) }
         )
         Screen.CAROUSEL -> CarouselScreen(
             hasSyncedLists = lists.isNotEmpty(),
@@ -280,9 +345,24 @@ fun ActiveTasksApp(
                 onLastListSaved(list)
             },
             onOpenSettings = { openSettings() },
+            onFindTask = { openFindTask(it) },
             onAdjustItem = { editingItemId = it },
             onCompleteForNow = { item -> TaskStore.completeItem(context, item, fully = false) },
             onFullyComplete = { item -> TaskStore.completeItem(context, item, fully = true) }
+        )
+    }
+
+    activatingItem?.let { draft ->
+        ItemDetailDialog(
+            item = draft,
+            confirmLabel = "Activate",
+            onCancel = { activatingItem = null },
+            onDismiss = {
+                TaskStore.activateItem(context, draft)
+                activatingItem = null
+            },
+            onPriorityChange = { importance, urgency -> activatingItem = draft.copy(importance = importance, urgency = urgency) },
+            onProgressChange = { progress -> activatingItem = draft.copy(progress = progress) }
         )
     }
 
@@ -336,7 +416,8 @@ fun SettingsScreen(
     statusMessage: String,
     canGoBack: Boolean,
     onCancel: () -> Unit,
-    onSave: (SettingsDraft) -> Unit
+    onSave: (SettingsDraft) -> Unit,
+    availableCategories: List<String>
 ) {
     // Every field edits [draft], owned by the caller: nothing is saved until Save Settings (Cancel
     // just discards it), and a QR scan fills the same draft. Saving with changed connection
@@ -383,6 +464,57 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item { Spacer(modifier = Modifier.height(8.dp)) }
+
+            item {
+                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        sectionHeader("Task Categories")
+                        if (openSection == "Task Categories") {
+                            Text(
+                                "Choose which task categories the Find Task button in the header searches " +
+                                    "for tasks to activate. This is separate from MicroTasking's own choice - " +
+                                    "each app looks at the categories you pick in it. The Find Task button on " +
+                                    "a list's own page always searches that list.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (availableCategories.isEmpty()) {
+                                Text(
+                                    "No categories yet. Connect your Google Sheet below to add categories (one per tab).",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            // Bounded + independently scrollable so a large category list never
+                            // pushes the rest of the screen off-screen (same as MicroTasking's).
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 320.dp)
+                                    .verticalScroll(rememberScrollState())
+                            ) {
+                                availableCategories.forEach { category ->
+                                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                        Checkbox(
+                                            checked = category !in draft.excludedCategories,
+                                            onCheckedChange = { checked ->
+                                                onDraftChange(
+                                                    draft.copy(
+                                                        excludedCategories =
+                                                            if (checked) draft.excludedCategories - category
+                                                            else draft.excludedCategories + category
+                                                    )
+                                                )
+                                            }
+                                        )
+                                        Text(category)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             item {
                 OutlinedCard(modifier = Modifier.fillMaxWidth()) {
@@ -434,37 +566,36 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            OutlinedTextField(
+                            ConnectionUrlField(
                                 value = draft.sheetUrl,
                                 onValueChange = { onDraftChange(draft.copy(sheetUrl = it)) },
-                                modifier = Modifier.fillMaxWidth(),
-                                label = { Text("Google Sheet URL") }
+                                label = "Google Sheet URL",
+                                placeholder = "https://docs.google.com/spreadsheets/d/...",
+                                check = ::checkSheetUrl
                             )
-                            OutlinedButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth()) {
-                                Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
-                                Text(" Scan Sheet QR Code")
+                            Button(onClick = onScanQr, modifier = Modifier.fillMaxWidth()) {
+                                Text("Scan Sheet QR Code")
                             }
 
                             Text(
                                 "The Web App is a small script inside your Sheet that lets the app write back " +
-                                    "to it - completing and re-prioritizing items. Deploy it once from your " +
+                                    "to it - activating, completing and re-prioritizing tasks. Deploy it once from your " +
                                     "Sheet (Extensions > Apps Script > Deploy > New deployment > Web app), " +
                                     "then paste its URL or scan its QR code from the onboarding page.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            OutlinedTextField(
+                            ConnectionUrlField(
                                 value = draft.appsScriptUrl,
                                 onValueChange = { onDraftChange(draft.copy(appsScriptUrl = it)) },
-                                modifier = Modifier.fillMaxWidth(),
-                                label = { Text("Apps Script Web App URL") },
-                                placeholder = { Text("https://script.google.com/macros/s/…/exec") }
+                                label = "Apps Script Web App URL",
+                                placeholder = "https://script.google.com/macros/s/.../exec",
+                                check = ::checkWebAppUrl
                             )
                             // Both scan buttons open the same scanner; the result is routed by what the
                             // scanned text looks like (parseSetupQr), never by which button was pressed.
-                            OutlinedButton(onClick = onScanQr, modifier = Modifier.fillMaxWidth()) {
-                                Icon(Icons.Filled.QrCodeScanner, contentDescription = null)
-                                Text(" Scan Web App QR Code")
+                            Button(onClick = onScanQr, modifier = Modifier.fillMaxWidth()) {
+                                Text("Scan Web App QR Code")
                             }
 
                             if (statusMessage.isNotBlank()) {
@@ -523,6 +654,81 @@ fun SettingsScreen(
     }
 }
 
+/**
+ * One Settings > Google Sheet Connection URL box, same in MicroTasking. Collapsed it is a single
+ * line; hovering it (mouse/stylus/ChromeOS) or focusing it expands it to show the entire URL, and
+ * focusing (a tap or click) also selects all of it. Under it: what [check] says - an error for a
+ * wrong kind of URL, or a link showing just the URL's hash portion that opens the complete URL.
+ * Advisory only - it never blocks saving.
+ */
+@Composable
+private fun ConnectionUrlField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    placeholder: String,
+    check: (String) -> UrlCheck
+) {
+    val context = LocalContext.current
+    val hoverSource = remember { MutableInteractionSource() }
+    val hovered by hoverSource.collectIsHoveredAsState()
+    var focused by remember { mutableStateOf(false) }
+    // The text is the caller's; only the selection lives here, so select-all can be applied. A
+    // change from outside (a QR scan filling the draft) shows up as a fresh value, caret at the end.
+    var fieldValue by remember { mutableStateOf(TextFieldValue(value)) }
+    val shown = if (fieldValue.text == value) fieldValue else TextFieldValue(value, TextRange(value.length))
+    val expanded = hovered || focused
+    // Selected a moment after focus arrives: the tap that focuses the field also places the caret,
+    // and would otherwise land after (and undo) the selection.
+    LaunchedEffect(focused) {
+        if (focused) {
+            delay(80)
+            fieldValue = TextFieldValue(value, TextRange(0, value.length))
+        }
+    }
+    val result = check(value)
+    val supporting: (@Composable () -> Unit)? = when (result) {
+        UrlCheck.Blank -> null
+        is UrlCheck.Invalid -> ({ Text(result.message, style = MaterialTheme.typography.bodySmall) })
+        is UrlCheck.Valid -> ({
+            Text(
+                result.id,
+                modifier = Modifier.clickable {
+                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(result.target))) }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                textDecoration = TextDecoration.Underline,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        })
+    }
+    OutlinedTextField(
+        value = shown,
+        onValueChange = {
+            // A URL has no line breaks: strip any (a paste can carry one) rather than let Enter add one.
+            fieldValue = if (it.text.any { c -> c == '\n' || c == '\r' }) {
+                val text = it.text.filterNot { c -> c == '\n' || c == '\r' }
+                TextFieldValue(text, TextRange(text.length))
+            } else it
+            onValueChange(fieldValue.text)
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .hoverable(hoverSource)
+            .onFocusChanged { focused = it.hasFocus },
+        label = { Text(label) },
+        placeholder = { Text(placeholder) },
+        // Not singleLine, so the expanded state can wrap to show the whole URL; collapsed, one line.
+        singleLine = false,
+        maxLines = if (expanded) 8 else 1,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
+        isError = result is UrlCheck.Invalid,
+        supportingText = supporting
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun CarouselScreen(
@@ -535,6 +741,7 @@ fun CarouselScreen(
     waitingChanges: Int,
     onListOpened: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    onFindTask: (list: String?) -> Unit,
     onAdjustItem: (String) -> Unit,
     onCompleteForNow: (ToDoItem) -> Unit,
     onFullyComplete: (ToDoItem) -> Unit
@@ -555,6 +762,10 @@ fun CarouselScreen(
             TopAppBar(
                 title = { Text("ActiveTasks") },
                 actions = {
+                    // Find Task across every category ticked in Settings > Task Categories.
+                    IconButton(onClick = { onFindTask(null) }) {
+                        Icon(Icons.Filled.AddCircle, contentDescription = "Find task", tint = MaterialTheme.colorScheme.primary)
+                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
                     }
@@ -572,7 +783,7 @@ fun CarouselScreen(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    if (hasSyncedLists) "No tasks referred yet."
+                    if (hasSyncedLists) "No active tasks yet. Tap the + button above to find one."
                     else "No lists yet. Open Settings and connect your Google Sheet to get started.",
                     style = MaterialTheme.typography.bodyMedium
                 )
@@ -615,6 +826,7 @@ fun CarouselScreen(
                 // key-by-id below - see reconcileWithSheet, which is the primary place this is
                 // supposed to already be prevented.
                 val topItems = sortedForDisplay(items.filter { it.list == listName && !it.done }.distinctBy { it.id }, importanceWeight).take(topN)
+                Box(modifier = Modifier.fillMaxSize()) {
                 if (topItems.isEmpty()) {
                     // Reachable mid-session: completing this list's last item removes it from
                     // visibleLists on the next recomposition, but the pager can briefly still be
@@ -624,11 +836,13 @@ fun CarouselScreen(
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text("Nothing referred to \"$listName\" yet.", style = MaterialTheme.typography.bodyMedium)
+                        Text("Nothing active in \"$listName\" yet.", style = MaterialTheme.typography.bodyMedium)
                     }
                 } else {
                     LazyColumn(
-                        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp),
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                        // Room below the last card for the Find Task button floating over it.
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 88.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(topItems, key = { it.id }) { toDoItem ->
@@ -638,6 +852,123 @@ fun CarouselScreen(
                                 onCompleteForNow = { onCompleteForNow(toDoItem) },
                                 onFullyComplete = { onFullyComplete(toDoItem) }
                             )
+                        }
+                    }
+                }
+                // Find Task for just this list (its tab), bottom right of each mini list screen.
+                FloatingActionButton(
+                    onClick = { onFindTask(listName) },
+                    shape = CircleShape,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = "Find task in $listName")
+                }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Find Task: the enabled-but-not-yet-activated Sheet rows (importance/urgency still empty) for one
+ * list, or for every category ticked in Settings when [listName] is null, each with an Activate
+ * button that opens the Priority & progress dialog. Activating writes the priority to the Sheet's
+ * hidden columns, so it is independent of what MicroTasking does with the same row.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FindTaskScreen(
+    listName: String?,
+    candidates: List<ToDoItem>,
+    hasSyncedLists: Boolean,
+    allCategoriesExcluded: Boolean,
+    syncing: Boolean,
+    syncError: String,
+    onBack: () -> Unit,
+    onActivate: (ToDoItem) -> Unit
+) {
+    val context = LocalContext.current
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Find Task") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            Text(
+                listName ?: "All selected categories",
+                modifier = Modifier.padding(horizontal = 16.dp).padding(top = 8.dp),
+                style = MaterialTheme.typography.headlineMedium
+            )
+            if (syncing) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp))
+            }
+            if (syncError.isNotBlank()) {
+                Text(
+                    syncError,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            if (candidates.isEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(24.dp),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        when {
+                            !hasSyncedLists -> "No lists yet. Open Settings and connect your Google Sheet to get started."
+                            listName == null && allCategoriesExcluded ->
+                                "No task categories are selected. Choose some in Settings > Task Categories."
+                            syncing -> "Looking…"
+                            listName != null -> "Every enabled task in \"$listName\" is already active."
+                            else -> "Every enabled task in your selected categories is already active."
+                        },
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                    contentPadding = PaddingValues(vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(candidates, key = { it.id }) { candidate ->
+                        OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                if (listName == null) {
+                                    Text(
+                                        candidate.list,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(candidate.description, style = MaterialTheme.typography.bodyLarge)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    if (candidate.link.isNotBlank()) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(candidate.link))) }
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        ) { Text("Open link") }
+                                    }
+                                    Button(onClick = { onActivate(candidate) }, modifier = Modifier.weight(1f)) {
+                                        Text("Activate")
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -803,18 +1134,24 @@ private fun Modifier.pointerInputMatrix(onOffset: (x: Float, y: Float) -> Unit):
     }
 
 /**
- * Re-triage (priority matrix) and progress for a referred item. The priority is written back to
- * the Sheet when the dialog closes (queued, see [TaskStore.commitPriority]); progress stays local.
+ * Re-triage (priority matrix) and progress for an item. The priority is written back to the Sheet
+ * when the dialog closes (queued, see [TaskStore.commitPriority]); progress stays local.
+ *
+ * Also the activation dialog for Find Task: there [onCancel] is set, so the confirm button
+ * ([confirmLabel], "Activate") is the only thing that calls [onDismiss] and a tap outside or
+ * Cancel backs out without activating anything.
  */
 @Composable
 fun ItemDetailDialog(
     item: ToDoItem,
     onDismiss: () -> Unit,
     onPriorityChange: (importance: Float, urgency: Float) -> Unit,
-    onProgressChange: (Int) -> Unit
+    onProgressChange: (Int) -> Unit,
+    confirmLabel: String = "Done",
+    onCancel: (() -> Unit)? = null
 ) {
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = onCancel ?: onDismiss,
         title = { Text(item.description) },
         text = {
             Column {
@@ -837,8 +1174,9 @@ fun ItemDetailDialog(
             }
         },
         confirmButton = {
-            Button(onClick = onDismiss) { Text("Done") }
-        }
+            Button(onClick = onDismiss) { Text(confirmLabel) }
+        },
+        dismissButton = onCancel?.let { cancel -> { OutlinedButton(onClick = cancel) { Text("Cancel") } } }
     )
 }
 

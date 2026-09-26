@@ -136,3 +136,26 @@
      and then clears when the network returns without reopening the app.
    - Existing ActiveTasks installs must be uninstalled once (signing key changed to MicroTasking's);
      the install page says so.
+6. **Standalone use: Find Task** — *specified and built 2026-09-26 on branch `feature-convergence`
+   (`SPEC.md` "Screens" > "Find Task", "Items"; `FindTaskScreen`, `TaskStore.candidates`/`activateItem`,
+   Settings > Task Categories); unit-tested, not yet built into a release or verified on-device.*
+   A circle-plus button left of the header's Settings icon (all ticked categories) and one at the
+   bottom right of each list page (that tab) list the Sheet's enabled-but-unactivated rows, each with
+   an Activate button that opens Priority & progress; activating queues a `setPriority`.
+   - **Remaining**: on-device check - activate from both buttons, confirm the Sheet's hidden
+     columns fill and MicroTasking stops prompting the row after its next sync; Complete (for now)
+     an activated task and confirm it returns to Find Task; activate offline and confirm the item stays
+     across a sync until the queue flushes.
+   - **Open**: there is no ActiveTasks → MicroTasking "activated" message (the v1 contract only has
+     `completedForNow`/`fullyCompleted` in that direction), so MicroTasking learns of an activation at
+     its next Sheet read, not within seconds. Adding one means changing both apps' contract in step.
+   - **Open**: creating a brand-new Sheet row from ActiveTasks (`createRow`) is still item 3's Add
+     item and is not part of this.
+   - **Peer settings + onboarding** (2026-09-26, same branch; `SPEC.md` "Screens" > Settings, "Screens" >
+     Onboarding page): Settings' two connection URL boxes (single-line, hover/focus
+     expands, focus selects all, validation, hash link) and a reworked install page that repeats
+     MicroTasking's and links both ways. Unit-tested (`ConnectionUrlsTest`), page generated and
+     JS-syntax-checked locally; **not verified on-device or on the live Pages site**. Remaining:
+     confirm select-all sticks after a tap on a real phone (the 80 ms delay is a guess), confirm hover
+     with a mouse/ChromeOS, and that MicroTasking's page links back to
+     `https://vemcg.github.io/ActiveTasks/` (its session's side).

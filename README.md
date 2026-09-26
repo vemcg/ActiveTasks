@@ -11,8 +11,9 @@ you're prompted.
 ## Status
 
 Lists are the Sheet's tabs, shown as a swipeable carousel that opens on the last list you
-viewed (else the highest-priority one). A list only contains items you've referred from
-MicroTasking, ranked by an Eisenhower-matrix priority; each item is a card with Complete (for
+viewed (else the highest-priority one). A list only contains tasks you've activated - referred
+from MicroTasking, or found in ActiveTasks itself with the Find Task (+) buttons - ranked by an
+Eisenhower-matrix priority; each item is a card with Complete (for
 now) / Fully complete buttons underneath. See [SPEC.md](SPEC.md) for the full intended feature
 set and [PUNCH_LIST.md](PUNCH_LIST.md) for what's next.
 

@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
+// Updated 2026-09-26, after version v0.2.0-29 main 2026-09-26
 package com.activetasks.app
 
 import org.junit.Assert.assertEquals
@@ -446,5 +447,79 @@ class ToDoDataTest {
     fun readToDoItems_survivesGarbageJson() {
         assertTrue(readToDoItems("not json").isEmpty())
         assertFalse(readToDoItems("[]").isNotEmpty())
+    }
+
+    // --- Find Task: standalone activation of enabled-but-unreferred rows ---
+
+    @Test
+    fun unactivatedItemsFromRows_returnsCheckedRowsWithoutAPriority_inSheetOrder() {
+        val csv = """
+            checked,description,link,Task ID
+            TRUE,Not yet active,https://x,t1
+            TRUE,Already active,,t2
+            FALSE,Not enabled,,t3
+            TRUE,Active by description only,,
+            TRUE,Second candidate,,
+        """.trimIndent()
+        val priorities = mapOf(
+            "id:t2" to SheetPriority(0.5f, 0.5f),
+            "Active by description only" to SheetPriority(0.1f, 0.1f)
+        )
+        val candidates = unactivatedItemsFromRows(csv, "Errands", priorities)
+        assertEquals(listOf("Not yet active", "Second candidate"), candidates.map { it.description })
+        // Same id an activated item gets, so activating replaces the candidate rather than duplicating it.
+        assertEquals("sheet-t1", candidates[0].id)
+        assertEquals("sheet-Errands-Second candidate", candidates[1].id)
+        assertEquals("https://x", candidates[0].link)
+        assertEquals("Errands", candidates[0].list)
+    }
+
+    @Test
+    fun unactivatedItemsFromRows_andToDoItemsFromReferredRows_partitionTheCheckedRows() {
+        val csv = """
+            checked,description
+            TRUE,A
+            TRUE,B
+            TRUE,C
+        """.trimIndent()
+        val priorities = mapOf("B" to SheetPriority(0.3f, 0.4f))
+        val active = toDoItemsFromReferredRows(csv, "L", priorities).map { it.description }
+        val inactive = unactivatedItemsFromRows(csv, "L", priorities).map { it.description }
+        assertEquals(listOf("B"), active)
+        assertEquals(listOf("A", "C"), inactive)
+    }
+
+    @Test
+    fun dropActivatedCandidates_dropsJustActivatedRowsAndExistingItems() {
+        val candidates = listOf(
+            ToDoItem(id = "sheet-L-A", description = "A", list = "L"),
+            ToDoItem(id = "sheet-L-B", description = "B", list = "L"),
+            ToDoItem(id = "sheet-L-C", description = "C", list = "L")
+        )
+        val pending = listOf(PendingChange(PendingOp.SET_PRIORITY, "sheet-L-A", "L", "A", null, 0.5f, 0.5f))
+        val items = listOf(ToDoItem(id = "sheet-L-B", description = "B", list = "L"))
+        assertEquals(listOf("sheet-L-C"), dropActivatedCandidates(candidates, pending, items).map { it.id })
+    }
+
+    @Test
+    fun findTaskCandidates_headerButtonHonorsExcludedCategories_butAListsOwnButtonDoesNot() {
+        val candidates = listOf(
+            ToDoItem(id = "sheet-Home-A", description = "A", list = "Home"),
+            ToDoItem(id = "sheet-Work-B", description = "B", list = "Work")
+        )
+        assertEquals(listOf("Home"), findTaskCandidates(candidates, null, setOf("Work")).map { it.list })
+        assertEquals(listOf("Work"), findTaskCandidates(candidates, "Work", setOf("Work")).map { it.list })
+        assertTrue(findTaskCandidates(candidates, null, setOf("Home", "Work")).isEmpty())
+    }
+
+    @Test
+    fun reconcileWithSheet_keepsAnActivatedItemWhosePriorityWriteHasntLandedYet() {
+        val activated = ToDoItem(id = "sheet-L-A", description = "A", list = "L", importance = 0.7f, urgency = 0.6f)
+        val pending = listOf(PendingChange(PendingOp.SET_PRIORITY, "sheet-L-A", "L", "A", null, 0.7f, 0.6f))
+        // The read doesn't show the row as referred (write not landed) - the item must survive.
+        val rebuilt = reconcileWithSheet(imported = emptyList(), existing = listOf(activated), pending = pending)
+        assertEquals(listOf("sheet-L-A"), rebuilt.map { it.id })
+        // Once the write leaves the queue, the Sheet is definitive again.
+        assertTrue(reconcileWithSheet(imported = emptyList(), existing = listOf(activated), pending = emptyList()).isEmpty())
     }
 }

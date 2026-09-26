@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-// Updated 2026-09-25, after version v0.2.0-27 main 2026-09-25
+// Updated 2026-09-26, after version v0.2.0-29 main 2026-09-26
 package com.activetasks.app
 
 import android.content.Context
@@ -44,6 +44,7 @@ object TaskStore {
     private const val KEY_ITEMS = "todo_items"
     private const val KEY_ITEMS_SCHEMA = "items_schema"
     private const val KEY_LISTS = "known_lists"
+    private const val KEY_CANDIDATES = "find_task_candidates"
     private const val KEY_PENDING = "pending_changes"
     private const val KEY_PENDING_STUCK = "pending_stuck"
     private const val KEY_RECENT_COMPLETIONS = "recent_completions"
@@ -65,6 +66,11 @@ object TaskStore {
     private val _lists = MutableStateFlow<List<String>>(emptyList())
     val lists: StateFlow<List<String>> = _lists
 
+    // Enabled Sheet rows with no priority yet - what Find Task offers to activate (priority 0/0
+    // ToDoItems under the id they'd have once activated). Rebuilt by every successful sync.
+    private val _candidates = MutableStateFlow<List<ToDoItem>>(emptyList())
+    val candidates: StateFlow<List<ToDoItem>> = _candidates
+
     private val _pending = MutableStateFlow<List<PendingChange>>(emptyList())
 
     // Number of changes still waiting after the last flush attempt failed to send them all; 0
@@ -74,6 +80,13 @@ object TaskStore {
 
     private val _lastSyncMessage = MutableStateFlow("")
     val lastSyncMessage: StateFlow<String> = _lastSyncMessage
+
+    // True while a sync's Sheet read is in flight, and whether the last one failed - Find Task shows
+    // both, since it refreshes when opened.
+    private val _syncing = MutableStateFlow(false)
+    val syncing: StateFlow<Boolean> = _syncing
+    private val _lastSyncFailed = MutableStateFlow(false)
+    val lastSyncFailed: StateFlow<Boolean> = _lastSyncFailed
 
     // Item id -> when this device completed it, so a late or duplicate "referred" message from
     // before that completion can't bring the item back (MicroTasking applies the mirror guard).
@@ -108,6 +121,7 @@ object TaskStore {
             }
             _items.value = loadedItems
             _lists.value = readStringList(preferences.getString(KEY_LISTS, "[]") ?: "[]")
+            _candidates.value = readToDoItems(preferences.getString(KEY_CANDIDATES, "[]") ?: "[]")
             _pending.value = readPendingChanges(preferences.getString(KEY_PENDING, "[]") ?: "[]")
             _stuckCount.value = if (preferences.getBoolean(KEY_PENDING_STUCK, false)) _pending.value.size else 0
             recentCompletions = readRecentCompletions(preferences.getString(KEY_RECENT_COMPLETIONS, "{}") ?: "{}")
@@ -120,6 +134,11 @@ object TaskStore {
     private fun setItems(context: Context, newItems: List<ToDoItem>) {
         _items.value = newItems
         prefs(context).edit().putString(KEY_ITEMS, writeToDoItems(newItems)).apply()
+    }
+
+    private fun setCandidates(context: Context, newCandidates: List<ToDoItem>) {
+        _candidates.value = newCandidates
+        prefs(context).edit().putString(KEY_CANDIDATES, writeToDoItems(newCandidates)).apply()
     }
 
     private fun setPending(context: Context, newPending: List<PendingChange>, stuck: Boolean) {
@@ -163,6 +182,26 @@ object TaskStore {
         requestFlush(context)
     }
 
+    /**
+     * Find Task > Activate: the candidate becomes an item at once with the chosen priority (and
+     * progress), and the Sheet's importance/urgency write is queued like a re-triage. Nothing is
+     * sent to MicroTasking: it leaves a row with a priority out of its own queue when it next reads
+     * the Sheet.
+     */
+    fun activateItem(context: Context, item: ToDoItem) {
+        ensureLoaded(context)
+        synchronized(stateLock) {
+            setItems(context, (_items.value.filterNot { it.id == item.id } + item.copy(addedAtEpochMs = System.currentTimeMillis())))
+            setCandidates(context, _candidates.value.filterNot { it.id == item.id })
+            val change = PendingChange(
+                op = PendingOp.SET_PRIORITY, itemId = item.id, category = item.list, description = item.description,
+                taskId = item.taskId, importance = item.importance, urgency = item.urgency
+            )
+            setPending(context, enqueuePendingChange(_pending.value, change), stuck = _stuckCount.value > 0)
+        }
+        requestFlush(context)
+    }
+
     /** Re-triage finished (dialog closed with a new priority): queue the write-back of the item's current priority. */
     fun commitPriority(context: Context, itemId: String) {
         ensureLoaded(context)
@@ -186,6 +225,7 @@ object TaskStore {
                 val completedAt = recentCompletions[id]
                 if (completedAt != null && event.eventAtEpochMs <= completedAt) return
                 eventAddedAt[id] = System.currentTimeMillis()
+                setCandidates(context, _candidates.value.filterNot { it.id == id })
             }
             setItems(context, applyTaskEvent(_items.value, event))
         }
@@ -285,7 +325,13 @@ object TaskStore {
         return networkMutex.withLock {
             if (completedSyncs >= ticket) return@withLock lastSyncResult
             val coveredUpTo = synchronized(stateLock) { requestedSyncs }
-            val result = syncLocked(context)
+            _syncing.value = true
+            val result = try {
+                syncLocked(context)
+            } finally {
+                _syncing.value = false
+            }
+            _lastSyncFailed.value = result is SyncResult.Failure
             completedSyncs = coveredUpTo
             lastSyncResult = result
             _lastSyncMessage.value = result.message
@@ -319,10 +365,15 @@ object TaskStore {
         val imported = tabs.flatMap { tab ->
             toDoItemsFromReferredRows(tab.csv, tab.tabName, prioritiesByTab[tab.tabName].orEmpty())
         }
+        // Enabled rows with no priority: what Find Task offers (recomputed from the same read).
+        val unactivated = tabs.flatMap { tab ->
+            unactivatedItemsFromRows(tab.csv, tab.tabName, prioritiesByTab[tab.tabName].orEmpty())
+        }
         synchronized(stateLock) {
             val keepIds = eventAddedAt.filterValues { it >= readStartedAt }.keys
             eventAddedAt.keys.retainAll(keepIds)
             setItems(context, reconcileWithSheet(imported, _items.value, _pending.value, keepIds))
+            setCandidates(context, dropActivatedCandidates(unactivated, _pending.value, _items.value))
             // A completion whose write's own HTTP response never came back as a confirmed Success
             // (dropped connection, timeout) but that this read shows already landed on the Sheet:
             // stop retrying it instead of leaving it "stuck" forever - see reconcileCompletedPending.
@@ -353,6 +404,7 @@ object TaskStore {
         networkMutex.withLock {
             synchronized(stateLock) {
                 setItems(context, emptyList())
+                setCandidates(context, emptyList())
                 setPending(context, emptyList(), stuck = false)
                 _lists.value = emptyList()
                 recentCompletions = emptyMap()

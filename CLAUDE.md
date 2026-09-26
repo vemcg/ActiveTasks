@@ -12,9 +12,13 @@ flat scale. Where MicroTasking pushes semi-random prompts, ActiveTasks is pull �
 no notifications.
 
 **Gated ingestion, not "every checked row":** unlike MicroTasking's own task pool, an item only
-reaches ActiveTasks via an explicit "refer to ActiveTasks" action in MicroTasking's task queue — a row the
-user just checks directly in the Sheet stays purely MicroTasking's task until referred. Referral
-writes importance/urgency to two hidden, protected columns via a shared Apps Script Web App (owned
+reaches ActiveTasks once it is *activated* (importance/urgency set) — either by the explicit "refer to
+ActiveTasks" action in MicroTasking's task queue, or (since 2026-09-26, making the app standalone) by
+the **Find Task** buttons here: they list the Sheet's enabled-but-unactivated rows (*candidates*, held
+in `TaskStore.candidates`, rebuilt by every sync) with an Activate button that opens the Priority &
+progress dialog. Which tabs the header's Find Task searches is ActiveTasks's own Settings > Task
+Categories, independent of MicroTasking's. A row the user just checks in the Sheet is only a candidate
+until activated. Activation and referral both write importance/urgency to two hidden, protected columns via a shared Apps Script Web App (owned
 by MicroTasking's repo, `scripts/populate_google_sheet.js` there); ActiveTasks reads those two columns
 the same way (never via the plain CSV/gviz export, which would leak hidden-column data) and only
 imports rows present in that read. See `SPEC.md` "Referral bridge" for the full contract
@@ -52,7 +56,7 @@ auto-trigger the release workflow, same convention as MicroTasking):
 
 ## Architecture
 
-Six source files under `app/src/main/java/com/activetasks/app/`:
+Seven source files under `app/src/main/java/com/activetasks/app/`:
 
 - **`MainActivity.kt`** — the Activity plus every Compose screen: Settings (paste/QR-scan the
   Sheet URL, the Apps Script Web App URL, importance-weight and items-per-list settings - all a
@@ -63,9 +67,11 @@ Six source files under `app/src/main/java/com/activetasks/app/`:
   (each referred item is a card: task text, then Complete-for-now / Fully-complete / Priority &
   progress / Open-link buttons underneath — no checkbox, no trash icon), `ItemDetailDialog`
   (priority matrix + progress slider only; a moved priority is queued for write-back on close), QR scanner (ML Kit barcode scanning, copied from
-  MicroTasking's `QrScannerScreen`). There is deliberately **no** add-item path: a list only ever
-  holds items referred from MicroTasking (`itemsToLoad` also purges anything a pre-referral build
-  stored, gated by `ITEMS_SCHEMA_VERSION`). The carousel opens on the last-swiped list, else the
+  MicroTasking's `QrScannerScreen`); `FindTaskScreen` (candidate cards with Activate; opened by the
+  header's circle-plus button or the per-list bottom-right one) reuses `ItemDetailDialog` with an
+  Activate/Cancel pair as the activation dialog. There is deliberately **no** create-a-new-row path:
+  a list only holds items that have a priority in the Sheet (`itemsToLoad` also purges anything a
+  pre-referral build stored, gated by `ITEMS_SCHEMA_VERSION`). The carousel opens on the last-swiped list, else the
   highest-priority one (`initialListName`).
 - **`ToDoData.kt`** — data model (`ToDoItem`, `Quadrant`), JSON read/write helpers
   (SharedPreferences-backed, no Room/DB — same convention as MicroTasking's `TaskPool.kt`), plain
@@ -80,6 +86,9 @@ Six source files under `app/src/main/java/com/activetasks/app/`:
 - **`TaskEvents.kt`** — the cross-app message contract with MicroTasking (explicit broadcast,
   signature-level permission shared by both apps; must match MicroTasking's copy exactly - see
   `SPEC.md` "Synchronization" > "Message contract, v1"), plus `TaskEventReceiver`.
+- **`ConnectionUrls.kt`** — `checkSheetUrl`/`checkWebAppUrl` → `UrlCheck` (Blank / Invalid(message) /
+  Valid(id, target)): the rules behind Settings' two URL boxes (`ConnectionUrlField` in
+  `MainActivity.kt`). Identical in MicroTasking's own `ConnectionUrls.kt` - change them in step.
 - **`SheetImport.kt`** — generic Google Sheet tab discovery + per-tab CSV fetch
   (`fetchSheetTabs`, columns A-C only; null on any failure - never a partial read), adapted from MicroTasking's `MainActivity.kt` Sheet-import
   functions but kept free of any `ToDoItem`-specific mapping so it's just "give me every tab's raw
@@ -125,6 +134,11 @@ feature work), `DEFECTS.md` (numbered bug write-ups, empty so far).
 same shape as MicroTasking's (debug-signed APK via a checked-in debug keystore — since 2026-09-24 the
 same key as MicroTasking's (a copy of its `keystore/debug.keystore`), required by the shared
 signature-level permission the two apps' cross-app messages use — GitHub Release tagged `vBASE-N`, install
-page with QR code(s) deployed to GitHub Pages), but trimmed: no `--template-url` step, since the
-install page tells the user to reuse the Sheet they already set up for MicroTasking rather than
-create a new one.
+page with QR code(s) deployed to GitHub Pages). Since 2026-09-26 the install page is a full peer of
+MicroTasking's, not a trimmed companion: it repeats MicroTasking's page (create the Sheet from the
+template via `--template-url`, install, the in-browser setup-QR generator, scan & sync) in
+ActiveTasks's own words, and the two pages link to each other (`--microtasking-page-url`, default
+`https://vemcg.github.io/MicroTasking/`; MicroTasking's page links back to
+`https://vemcg.github.io/ActiveTasks/`). The QR generator reuses MicroTasking's `localStorage` keys on
+purpose - both pages are on the `vemcg.github.io` origin, so a URL typed on one is already filled in
+on the other. Keep the page's CSS/JS in step with MicroTasking's copy by hand.

@@ -1,36 +1,42 @@
 # ActiveTasks Spec
 
-A traditional to-do list, companion to MicroTasking, sharing MicroTasking's Google Sheet as its
-list/item source. Unlike a plain mirror of the sheet, an item only reaches ActiveTasks once it's been
-explicitly **referred** here from MicroTasking's task queue - see "Referral bridge" below for the
-full lifecycle, negotiated directly between this repo's and MicroTasking's Claude Code sessions
-and confirmed by the user on both sides (2026-09-18).
+A traditional to-do list that shares MicroTasking's Google Sheet as its list/item source. Unlike a
+plain mirror of the sheet, an item only appears once it has been **activated** - given an
+importance/urgency - either by referring it from MicroTasking's task queue (see "Referral bridge"
+below, negotiated directly between this repo's and MicroTasking's Claude Code sessions and confirmed
+by the user on both sides, 2026-09-18) or, since 2026-09-26, by **Find Task** inside ActiveTasks
+itself (see "Screens" > "Find Task"), which makes the app usable standalone: MicroTasking is no
+longer needed to get a task into it.
 
 ## Lists
 
 - Each Google Sheet tab (excluding a README tab) is one to-do list, named after the tab.
 - A tab with zero rows still counts as a live list (`known_lists`, refreshed on every successful
-  sync) - but it only gets a page in the carousel once it has at least one referred (non-done)
+  sync) - but it only gets a page in the carousel once it has at least one active (non-done)
   item; a tab with nothing currently referred to it is skipped entirely rather than showing up
   empty (see "Screens"). `known_lists` still distinguishes "never synced" from "synced, nothing
   referred anywhere" for the carousel's empty-state message.
 
 ## Items
 
-- **Ingestion is gated on referral.** A Sheet-sourced item only enters ActiveTasks once its hidden
+- **Ingestion is gated on activation.** A Sheet-sourced item only enters ActiveTasks once its hidden
   `Importance`/`Urgency` columns are populated - checked via the Apps Script Web App at sync time,
-  never via the CSV/gviz export (see "Referral bridge"). A checked-but-unreferred row stays
-  MicroTasking-only and never appears here at all; column A (enabled checkbox) and
-  `description`/`link` (header-text matched, order-independent) are still read via the existing
-  CSV/gviz path once a row does qualify.
-- **A list holds only items that carry a priority** - either referred from MicroTasking, or added
-  here with **Add item** (see "Screens"), which writes the row with its priority already set so it
-  is never a MicroTasking pool task. There is no unprioritized "inbox" and no local-only item: a
-  fresh install, or one where nothing has been prioritized yet, **comes up blank** (every list
-  empty). ActiveTasks is a companion to the shared Sheet, not a standalone to-do app (standalone was
-  considered and dropped 2026-09-19); a row typed into the Sheet by hand is a MicroTasking pool
-  task, not an ActiveTasks item, by design. (An earlier design allowed ad-hoc `local-` items; removed at
-  the user's direction 2026-09-18.)
+  never via the CSV/gviz export (see "Referral bridge"). A checked-but-unactivated row is not an
+  item: it is a *candidate* that **Find Task** lists (see "Screens") and that MicroTasking may
+  prompt; column A (enabled checkbox) and `description`/`link` (header-text matched,
+  order-independent) are still read via the existing CSV/gviz path once a row does qualify.
+- **A list holds only items that carry a priority** - referred from MicroTasking, or activated here
+  with **Find Task** (the Sheet write is the same `setPriority`, so the two are indistinguishable
+  afterwards). There is no unprioritized "inbox" and no local-only item: a fresh install, or one
+  where nothing has been activated yet, **comes up blank** (every list empty) until the user finds
+  tasks. A row typed into the Sheet by hand is a candidate, not an item, by design. (An earlier
+  design allowed ad-hoc `local-` items; removed at the user's direction 2026-09-18. Standalone use
+  was dropped 2026-09-19 and reinstated 2026-09-26 as Find Task, at the user's direction.)
+- **Independent of MicroTasking's own selection.** Which tabs MicroTasking prompts from (its Task
+  Categories) and which tabs Find Task searches (ActiveTasks's own Task Categories) are separate
+  settings. MicroTasking can activate a task ActiveTasks's categories don't cover - it still shows
+  in ActiveTasks once activated - and ActiveTasks can activate or deactivate (Complete for now) a task
+  MicroTasking's categories would never prompt. Only the Sheet's importance/urgency columns are shared.
   Stored items are versioned (`ITEMS_SCHEMA_VERSION`): anything saved by an older schema - the
   pre-referral scaffold imported every checked row - is discarded on first launch of a newer
   build, and `local-` items are never loaded. The next sync re-imports only what is genuinely
@@ -159,9 +165,16 @@ implements this contract.
 ## Screens
 
 1. **Settings** - app bar title is "Settings" (with a back icon once `canGoBack`, i.e. once at
-   least one Sheet sync has ever completed). Below it, three collapsible accordion cards (at most
+   least one Sheet sync has ever completed). Below it, four collapsible accordion cards (at most
    one open at a time), same accordion pattern and section-header styling as MicroTasking's
    Settings screen (`sectionHeader`), in this order:
+   - **"Task Categories"** (added 2026-09-26) - a checkbox per Sheet tab (`known_lists`, one bounded
+     scrolling list like MicroTasking's), choosing which tabs the header's **Find Task** button
+     searches. Every tab starts ticked; the persisted value is the *unticked* set
+     (`find_task_excluded_categories`), so a tab added to the Sheet later is included by default.
+     A draft field like the rest (nothing saved until Save Settings), needs no sync. It affects
+     only Find Task: activated items always show in the carousel whatever their tab, and a list's own
+     Find Task button ignores it. Independent of MicroTasking's setting of the same name.
    - **"Priority & Lists"** - a 5-stop, no-numbers slider: "Importance" and "Urgency" labels sit at
      opposite ends, and the label whose side you slide toward grows (the other shrinks) - centered
      is equal, deliberately with no visible formula or weight number (`priorityTiltFontSize`,
@@ -188,6 +201,25 @@ implements this contract.
      buttons open the same scanner and route the result by content (`parseSetupQr`), never by
      which button was pressed; a scan only fills the draft. A bare Sheet URL is no longer enough: ActiveTasks can't work without priorities,
      so it needs the connection code.
+
+     **The two URL boxes** (added 2026-09-26; identical in MicroTasking, whose `ConnectionUrls.kt`
+     holds the same rules - `ConnectionUrls.kt` / `ConnectionUrlField` here), each directly above its
+     scan button, both scan buttons plain filled buttons with no icon:
+     - *Collapsed* it is a single line. *Hovering* it (mouse/stylus/ChromeOS - touch has no hover) or
+       *focusing* it expands it (up to 8 lines) to show the entire URL; focusing (a tap or click)
+       also selects all of the text, applied ~80 ms after focus lands because the same tap places the
+       caret. Newlines are stripped; URL keyboard, Done key.
+     - *Validation* (advisory - never blocks Save; blank shows nothing; trimmed, host match
+       case-insensitive). Sheet URL: contains `docs.google.com/spreadsheets` and has a
+       `/spreadsheets/d/<id>`. Web App URL: contains `script.google.com/macros` **or**
+       `script.google.com/a/macros` (Workspace accounts' `/a/macros/<domain>/s/<id>/exec` form - the
+       user's literal rule, `script.google.com/macros`, would wrongly reject them; agreed with
+       MicroTasking's session 2026-09-26) and has an `/s/<id>`. Anything else is invalid.
+     - *Under the box*: invalid → the box shows its error state with "Not a Google Sheet URL - it
+       should contain docs.google.com/spreadsheets/d/..." / "Not an Apps Script Web App URL - it
+       should contain script.google.com/macros/s/..."; valid → an underlined link whose text is only
+       the hash portion (the spreadsheet id / the deployment id) and whose target is the complete
+       trimmed URL (`https://` added if missing).
    - **"About"** - version (`BuildConfig.VERSION_BASE`-`BUILD_NUMBER`) and build metadata
      (timestamp, git short SHA, git branch), same content and layout as MicroTasking's "About"
      section.
@@ -205,10 +237,14 @@ implements this contract.
    swipeable page **per list that currently has at least one referred item** - a list with nothing
    referred to it gets no page and never appears, so the page-indicator dots only ever count lists
    with something in them. Each page shows that list's top N open items by priority score.
-   - **No lists have anything referred yet** (whether or not the Sheet has been synced): instead of
-     the carousel, a single centered message - "No lists yet. Open Settings and sync your Google
-     Sheet to get started." before the first sync, or "No tasks referred yet." after a sync that
-     found no referred rows anywhere.
+   - **No lists have anything active yet** (whether or not the Sheet has been synced): instead of
+     the carousel, a single centered message - "No lists yet. Open Settings and connect your Google
+     Sheet to get started." before the first sync, or "No active tasks yet. Tap the + button above to
+     find one." after a sync that found no active rows anywhere.
+   - **Find Task buttons** (2026-09-26): a circle-with-a-plus in the app bar, immediately left of the
+     Settings icon (Find Task across every tab ticked in Settings > Task Categories), and the same
+     circle-plus as a floating button at the bottom right of every list's page (Find Task for that
+     list's tab only). Both open the Find Task screen below.
    - **Which page it opens on** (`initialListName`): the list the user last swiped to (persisted
      as `last_list`); if they never have, the list whose top open item has the highest priority
      score (earlier list wins ties; with nothing referred anywhere, the first list). Only a page
@@ -224,15 +260,30 @@ implements this contract.
 3. **Priority & progress** (dialog, from an item's card) - the continuous matrix widget
    (re-triage in place, written through to the Sheet when the dialog closes) and a progress slider
    (local-only).
-4. **Add item** (dialog, from an **Add item** button on the carousel) - pick one of the existing
-   lists, type the item (optional link), touch the matrix to set its priority; on confirm it is
-   written with `createRow` (priority included) and appears in the list immediately. Lists are
-   never created here - new tabs are made in the Sheet (or by MicroTasking's add). Exact layout
-   TBD at build time.
+4. **Find Task** (screen, from either Find Task button; 2026-09-26) - lists the not-yet-activated tasks:
+   rows of the tab (list button) or of every ticked category (header button) whose column A is
+   checked and whose importance/urgency are both empty. Each is a card - task text (plus its tab
+   name in the all-categories view), **Open link** when it has one, and **Activate**. Activate opens
+   the Priority & progress dialog with the matrix marker at the center, confirm button **Activate**
+   and a **Cancel**; only Activate does anything: the task becomes an item at once with the chosen
+   priority and progress, the card leaves the list, and a `setPriority` write is queued (the same
+   pending-changes queue as a re-triage). Opening the screen shows the candidates from the last sync
+   at once and refreshes them with a sync (a progress bar while it runs, its error if it fails).
+   No message is sent to MicroTasking (the contract has no such event); it stops prompting the row
+   at its next Sheet read. Empty states: not connected yet, no categories ticked, or "every enabled
+   task ... is already active". Deactivating is the existing **Complete (for now)**, which clears
+   the priority so the row is a candidate again. There is still no way to create a Sheet row from
+   here (`createRow` remains unbuilt - see PUNCH_LIST.md item 3).
 5. **QR scanner** - scans the setup QR with the same `parseSetupQr` classification MicroTasking
    uses (a line containing `script.google.com/` is the connection code; anything else is a legacy
    Sheet URL and is ignored here). It replaces today's behavior of dropping the raw scanned text
    into the Sheet-URL field.
+6. **Onboarding page** (`scripts/generate_install_page.py`, GitHub Pages; reworked 2026-09-26): a full
+  peer of MicroTasking's page, not a trimmed companion. It repeats MicroTasking's steps in
+  ActiveTasks's words - create your Sheet from the template, install, generate the two setup QR
+  codes in the browser, scan & sync - plus a step for finding and activating first tasks. The two
+  pages link to each other, and share `localStorage` keys (same origin) so a URL entered on one is
+  filled in on the other.
 
 ## Synchronization
 
@@ -293,6 +344,11 @@ Only one sync runs at a time; a trigger that fires mid-sync schedules exactly on
    even though the Sheet still shows it referred; an item with a queued `setPriority` keeps its
    new local priority). The existing legacy-id → `taskId` migration in
    `mergeImportedToDoItems` is kept.
+   The same read also rebuilds the **candidates** (Find Task's list, persisted as
+   `find_task_candidates`): every checked row with no referred priority, minus any row this device
+   has a queued `setPriority` for or that is already an item. An item with a queued `setPriority`
+   whose row the read doesn't yet show as active (an activation whose write hasn't landed) is kept
+   rather than dropped, until the write lands or comes back row-not-found.
 4. **All or nothing**: the rebuild happens only if the whole read succeeded. Any failure - network,
    Web App error, one tab's fetch failing - changes nothing locally. **Prerequisite**:
    `fetchAllPriorities` currently turns every failure into an empty list, which under this design
@@ -425,7 +481,7 @@ session - decisions 6, 8 and 9 below are ActiveTasks-only.
 - **On-device verification of the referral round-trip.** Both apps' code is written and compiles;
   neither side has been exercised end-to-end against a real deployed Web App yet. See
   PUNCH_LIST.md item 1.
-- **Connection-code QR** (one code for both apps), **Add item**, re-triage write-through, and
+- **Connection-code QR** (one code for both apps), **creating a new Sheet row from ActiveTasks**, re-triage write-through, and
   reading via `getTasks` - all specified in MicroTasking's `SPEC.md` "Sheet connection & API", not
   built here yet (re-triage write-through is now built - see "Synchronization"). Until then the Sheet is still read through the public export. (The scanner half
   is built: `parseSetupQr` classifies each scanned line as Web App URL or Sheet URL, so the

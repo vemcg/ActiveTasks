@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-// Updated 2026-09-25, after version v0.2.0-27 main 2026-09-25
+// Updated 2026-09-26, after version v0.2.0-29 main 2026-09-26
 package com.activetasks.app
 
 import org.json.JSONArray
@@ -167,7 +167,7 @@ fun toDoItemsFromReferredRows(
 ): List<ToDoItem> = parseToDoCsvRows(csvText)
     .filter { it.checked }
     .mapNotNull { row ->
-        val priority = row.taskId?.let { priorities["id:$it"] } ?: priorities[row.description] ?: return@mapNotNull null
+        val priority = priorityOf(row, priorities) ?: return@mapNotNull null
         ToDoItem(
             id = toDoItemId(row.taskId, listName, row.description),
             description = row.description,
@@ -178,6 +178,57 @@ fun toDoItemsFromReferredRows(
             urgency = priority.urgency
         )
     }
+
+/** A row's referred priority, looked up by taskId first and description text otherwise - see [toDoItemsFromReferredRows]. */
+private fun priorityOf(row: SheetRow, priorities: Map<String, SheetPriority>): SheetPriority? =
+    row.taskId?.let { priorities["id:$it"] } ?: priorities[row.description]
+
+/**
+ * The complement of [toDoItemsFromReferredRows]: this tab's enabled (checked) rows that have no
+ * importance/urgency yet, i.e. tasks that could be activated here (Find Task). Each comes back as
+ * an ordinary [ToDoItem] with priority 0/0 under the id it will have once activated, in Sheet row
+ * order. [priorities] is keyed the same way as for [toDoItemsFromReferredRows].
+ */
+fun unactivatedItemsFromRows(
+    csvText: String,
+    listName: String,
+    priorities: Map<String, SheetPriority>
+): List<ToDoItem> = parseToDoCsvRows(csvText)
+    .filter { it.checked && priorityOf(it, priorities) == null }
+    .map { row ->
+        ToDoItem(
+            id = toDoItemId(row.taskId, listName, row.description),
+            description = row.description,
+            list = listName,
+            link = row.link,
+            taskId = row.taskId
+        )
+    }
+    .distinctBy { it.id }
+
+/**
+ * Drops from [candidates] anything this device has just activated but whose priority write hasn't
+ * reached the Sheet yet (a queued [PendingOp.SET_PRIORITY]) or that is already an item in [items] -
+ * a Sheet read from before the write landed would otherwise offer it again.
+ */
+fun dropActivatedCandidates(
+    candidates: List<ToDoItem>,
+    pending: List<PendingChange>,
+    items: List<ToDoItem>
+): List<ToDoItem> {
+    val activatedIds = pending.filter { it.op == PendingOp.SET_PRIORITY }.mapTo(mutableSetOf()) { it.itemId } +
+        items.map { it.id }
+    return candidates.filter { it.id !in activatedIds }
+}
+
+/**
+ * What Find Task lists: every candidate on [listName] when the button was pressed on one list's
+ * page (that tab is asked for by name, so Settings > Task Categories doesn't apply), else every
+ * candidate whose tab isn't in [excludedCategories].
+ */
+fun findTaskCandidates(candidates: List<ToDoItem>, listName: String?, excludedCategories: Set<String>): List<ToDoItem> =
+    if (listName != null) candidates.filter { it.list == listName }
+    else candidates.filter { it.list !in excludedCategories }
 
 /**
  * An item's id, deterministic so a re-sync recognizes the same row instead of duplicating it.
@@ -296,7 +347,12 @@ fun reconcileWithSheet(
             pendingPriorities[sheetItem.id]?.let { merged.copy(importance = it.importance, urgency = it.urgency) } ?: merged
         }
     val rebuiltIds = rebuilt.mapTo(mutableSetOf()) { it.id }
-    val kept = existing.filter { it.id in keepIds && it.id !in rebuiltIds && it.id !in pendingCompletionIds }
+    // An item this device just activated (Find Task) or re-triaged has a queued priority write and
+    // may not be on the Sheet yet if that write hasn't landed - the read can't have seen it, so it
+    // stays until the write lands (or comes back RowNotFound and leaves the queue).
+    val kept = existing.filter {
+        (it.id in keepIds || resolvedId(it) in pendingPriorities) && it.id !in rebuiltIds && it.id !in pendingCompletionIds
+    }
     return (rebuilt + kept).distinctBy { it.id }
 }
 
