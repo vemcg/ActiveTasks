@@ -41,7 +41,7 @@ auto-trigger the release workflow, same convention as MicroTasking):
 
 ## Build tracking (user-requested convention, 2026-09-24)
 
-- **Last built version:** `v0.2.0-29` (branch `main`, built 2026-09-26). At the
+- **Last built version:** `v0.2.0-30` (branch `feature-convergence`, built 2026-09-26). At the
   start of every session, note this as the current known state before doing anything else. After
   triggering a build and confirming it went live (`gh run list` / the new GitHub Release), update
   this line to the new version/branch/date — don't leave it stale once a newer build exists.
