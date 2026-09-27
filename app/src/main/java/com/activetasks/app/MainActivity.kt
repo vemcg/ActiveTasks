@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-// Updated 2026-09-26, after version v0.2.0-30 feature-convergence 2026-09-26
+// Updated 2026-09-26, after version v0.2.0-31 feature-convergence 2026-09-26
 package com.activetasks.app
 
 import android.Manifest
@@ -60,7 +60,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -90,6 +89,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
@@ -869,16 +869,22 @@ fun CarouselScreen(
                     }
                 }
                 // Find Task for just this list (its tab), bottom right of each mini list screen.
-                FloatingActionButton(
-                    onClick = { onFindTask(listName) },
+                // Drawn by hand as a plain primary-green circle with an onPrimary plus rather than a
+                // FloatingActionButton: its defaults (primaryContainer) come out as Material's stock
+                // purple/pink under this palette, and this way the color can only be the app's own.
+                Surface(
                     shape = CircleShape,
-                    // Explicit: the default container is primaryContainer, which this palette never
-                    // defines, so it came out as Material's stock purple instead of the app's green.
-                    containerColor = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
+                    shadowElevation = 6.dp,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp).size(56.dp)
                 ) {
-                    Icon(Icons.Filled.Add, contentDescription = "Find task in $listName")
+                    Box(
+                        modifier = Modifier.fillMaxSize().clickable(role = Role.Button) { onFindTask(listName) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = "Find task in $listName")
+                    }
                 }
                 }
             }
