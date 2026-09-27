@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-// Updated 2026-09-26, after version v0.2.0-29 main 2026-09-26
+// Updated 2026-09-26, after version v0.2.0-30 feature-convergence 2026-09-26
 package com.activetasks.app
 
 import org.junit.Assert.assertEquals
@@ -499,6 +499,17 @@ class ToDoDataTest {
         val pending = listOf(PendingChange(PendingOp.SET_PRIORITY, "sheet-L-A", "L", "A", null, 0.5f, 0.5f))
         val items = listOf(ToDoItem(id = "sheet-L-B", description = "B", list = "L"))
         assertEquals(listOf("sheet-L-C"), dropActivatedCandidates(candidates, pending, items).map { it.id })
+    }
+
+    @Test
+    fun isSyncFresh_isTrueOnlyForARecentSuccess() {
+        val now = 1_000_000L
+        assertTrue(isSyncFresh(now - 30_000, now, 60_000))
+        assertTrue(isSyncFresh(now - 60_000, now, 60_000))
+        assertFalse(isSyncFresh(now - 60_001, now, 60_000))
+        assertFalse(isSyncFresh(null, now, 60_000))
+        // A clock that went backwards isn't "recent".
+        assertFalse(isSyncFresh(now + 5_000, now, 60_000))
     }
 
     @Test

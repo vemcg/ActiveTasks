@@ -217,9 +217,12 @@ implements this contract.
        MicroTasking's session 2026-09-26) and has an `/s/<id>`. Anything else is invalid.
      - *Under the box*: invalid → the box shows its error state with "Not a Google Sheet URL - it
        should contain docs.google.com/spreadsheets/d/..." / "Not an Apps Script Web App URL - it
-       should contain script.google.com/macros/s/..."; valid → an underlined link whose text is only
-       the hash portion (the spreadsheet id / the deployment id) and whose target is the complete
-       trimmed URL (`https://` added if missing).
+       should contain script.google.com/macros/s/..."; valid → the hash portion only (the spreadsheet
+       id / the deployment id). For the **Sheet** URL that is an underlined link whose target is the
+       complete trimmed URL (`https://` added if missing). For the **Web App** URL it is plain,
+       non-clickable text (muted color, no underline): the `/exec` address is only an API endpoint
+       and its id is a deployment id, not the script's, so browsing to it shows nothing useful (user
+       tapped it expecting the script source, 2026-09-26). Same in MicroTasking.
    - **"About"** - version (`BuildConfig.VERSION_BASE`-`BUILD_NUMBER`) and build metadata
      (timestamp, git short SHA, git branch), same content and layout as MicroTasking's "About"
      section.
@@ -268,7 +271,9 @@ implements this contract.
    and a **Cancel**; only Activate does anything: the task becomes an item at once with the chosen
    priority and progress, the card leaves the list, and a `setPriority` write is queued (the same
    pending-changes queue as a re-triage). Opening the screen shows the candidates from the last sync
-   at once and refreshes them with a sync (a progress bar while it runs, its error if it fails).
+   at once and refreshes them with a sync (a progress bar while it runs, its error if it fails) -
+   unless a sync succeeded within the last minute (the foreground sync usually just did), in which
+   case it doesn't read the Sheet again (`TaskStore.requestSyncIfStale`).
    No message is sent to MicroTasking (the contract has no such event); it stops prompting the row
    at its next Sheet read. Empty states: not connected yet, no categories ticked, or "every enabled
    task ... is already active". Deactivating is the existing **Complete (for now)**, which clears

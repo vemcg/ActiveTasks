@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-// Updated 2026-09-26, after version v0.2.0-29 main 2026-09-26
+// Updated 2026-09-26, after version v0.2.0-30 feature-convergence 2026-09-26
 package com.activetasks.app
 
 import android.content.Context
@@ -54,6 +54,7 @@ object TaskStore {
 
     private const val FLUSH_WORK_NAME = "flush_pending_changes"
     private const val RECENT_COMPLETION_TTL_MS = 7L * 24 * 60 * 60 * 1000
+    private const val FRESH_SYNC_MS = 60_000L
 
     private val stateLock = Any()
     private val networkMutex = Mutex()
@@ -101,6 +102,10 @@ object TaskStore {
     private var requestedSyncs = 0L
     private var completedSyncs = 0L
     private var lastSyncResult: SyncResult = SyncResult.Success("")
+
+    // When the last sync that succeeded finished (null: none this process, or the Sheet was just
+    // switched) - see requestSyncIfStale.
+    @Volatile private var lastSuccessfulSyncAt: Long? = null
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
@@ -311,6 +316,17 @@ object TaskStore {
     }
 
     /**
+     * Like [requestSync], but does nothing when a sync succeeded within [maxAgeMs] - Find Task calls
+     * this on opening, right after the foreground sync has usually just read the same Sheet, so a
+     * second full read (the whole workbook plus every tab plus the Web App) would only repeat it. A
+     * failed sync doesn't count, so a retry still happens.
+     */
+    fun requestSyncIfStale(context: Context, maxAgeMs: Long = FRESH_SYNC_MS) {
+        if (isSyncFresh(lastSuccessfulSyncAt, System.currentTimeMillis(), maxAgeMs)) return
+        requestSync(context)
+    }
+
+    /**
      * Runs a sync to completion even if the caller's screen goes away, and returns its result -
      * for Save Settings, which waits on it.
      */
@@ -332,6 +348,7 @@ object TaskStore {
                 _syncing.value = false
             }
             _lastSyncFailed.value = result is SyncResult.Failure
+            if (result is SyncResult.Success) lastSuccessfulSyncAt = System.currentTimeMillis()
             completedSyncs = coveredUpTo
             lastSyncResult = result
             _lastSyncMessage.value = result.message
@@ -409,6 +426,7 @@ object TaskStore {
                 _lists.value = emptyList()
                 recentCompletions = emptyMap()
                 eventAddedAt.clear()
+                lastSuccessfulSyncAt = null
                 _lastSyncMessage.value = ""
                 prefs(context).edit()
                     .putString(KEY_LISTS, "[]")

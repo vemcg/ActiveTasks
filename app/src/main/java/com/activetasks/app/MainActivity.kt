@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-// Updated 2026-09-26, after version v0.2.0-29 main 2026-09-26
+// Updated 2026-09-26, after version v0.2.0-30 feature-convergence 2026-09-26
 package com.activetasks.app
 
 import android.Manifest
@@ -239,11 +239,12 @@ fun ActiveTasksApp(
         screen = Screen.SETTINGS
     }
 
-    // Find Task shows what the last sync saw and refreshes it: the Sheet may have changed since.
+    // Find Task shows what the last sync saw and refreshes it (the Sheet may have changed since) -
+    // unless a sync succeeded within the last minute, which the foreground sync usually just did.
     fun openFindTask(list: String?) {
         findTaskList = list
         screen = Screen.FIND_TASK
-        TaskStore.requestSync(context)
+        TaskStore.requestSyncIfStale(context)
     }
 
     BackHandler(enabled = screen == Screen.FIND_TASK) { screen = Screen.CAROUSEL }
@@ -590,7 +591,10 @@ fun SettingsScreen(
                                 onValueChange = { onDraftChange(draft.copy(appsScriptUrl = it)) },
                                 label = "Apps Script Web App URL",
                                 placeholder = "https://script.google.com/macros/s/.../exec",
-                                check = ::checkWebAppUrl
+                                check = ::checkWebAppUrl,
+                                // The /exec address is only an API endpoint (its id is a deployment id,
+                                // not the script's), so browsing to it shows nothing useful.
+                                linkable = false
                             )
                             // Both scan buttons open the same scanner; the result is routed by what the
                             // scanned text looks like (parseSetupQr), never by which button was pressed.
@@ -658,8 +662,8 @@ fun SettingsScreen(
  * One Settings > Google Sheet Connection URL box, same in MicroTasking. Collapsed it is a single
  * line; hovering it (mouse/stylus/ChromeOS) or focusing it expands it to show the entire URL, and
  * focusing (a tap or click) also selects all of it. Under it: what [check] says - an error for a
- * wrong kind of URL, or a link showing just the URL's hash portion that opens the complete URL.
- * Advisory only - it never blocks saving.
+ * wrong kind of URL, or the URL's hash portion, as a link that opens the complete URL when
+ * [linkable] and as plain text when not. Advisory only - it never blocks saving.
  */
 @Composable
 private fun ConnectionUrlField(
@@ -667,7 +671,8 @@ private fun ConnectionUrlField(
     onValueChange: (String) -> Unit,
     label: String,
     placeholder: String,
-    check: (String) -> UrlCheck
+    check: (String) -> UrlCheck,
+    linkable: Boolean = true
 ) {
     val context = LocalContext.current
     val hoverSource = remember { MutableInteractionSource() }
@@ -690,7 +695,7 @@ private fun ConnectionUrlField(
     val supporting: (@Composable () -> Unit)? = when (result) {
         UrlCheck.Blank -> null
         is UrlCheck.Invalid -> ({ Text(result.message, style = MaterialTheme.typography.bodySmall) })
-        is UrlCheck.Valid -> ({
+        is UrlCheck.Valid -> if (linkable) ({
             Text(
                 result.id,
                 modifier = Modifier.clickable {
@@ -699,6 +704,14 @@ private fun ConnectionUrlField(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary,
                 textDecoration = TextDecoration.Underline,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }) else ({
+            Text(
+                result.id,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -859,6 +872,10 @@ fun CarouselScreen(
                 FloatingActionButton(
                     onClick = { onFindTask(listName) },
                     shape = CircleShape,
+                    // Explicit: the default container is primaryContainer, which this palette never
+                    // defines, so it came out as Material's stock purple instead of the app's green.
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
                 ) {
                     Icon(Icons.Filled.Add, contentDescription = "Find task in $listName")

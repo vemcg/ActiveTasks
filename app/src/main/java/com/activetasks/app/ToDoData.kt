@@ -1,5 +1,5 @@
 // Copyright (c) 2026 Vern McGeorge. All rights reserved.
-// Updated 2026-09-26, after version v0.2.0-29 main 2026-09-26
+// Updated 2026-09-26, after version v0.2.0-30 feature-convergence 2026-09-26
 package com.activetasks.app
 
 import org.json.JSONArray
@@ -205,6 +205,14 @@ fun unactivatedItemsFromRows(
         )
     }
     .distinctBy { it.id }
+
+/**
+ * Whether a sync that succeeded at [lastSuccessAtEpochMs] (null = none yet) is recent enough, at
+ * [nowEpochMs], that reading the Sheet again would only repeat it. Find Task uses this to skip its
+ * refresh right after the foreground sync.
+ */
+fun isSyncFresh(lastSuccessAtEpochMs: Long?, nowEpochMs: Long, maxAgeMs: Long): Boolean =
+    lastSuccessAtEpochMs != null && nowEpochMs - lastSuccessAtEpochMs in 0..maxAgeMs
 
 /**
  * Drops from [candidates] anything this device has just activated but whose priority write hasn't
